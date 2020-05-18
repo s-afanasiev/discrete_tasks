@@ -8,3 +8,4 @@ performing tasks on multiple nodes with centralized management and visualization
    Getting an update signal, Launcher and Controllers compare it with own trusted dirs and if it need, sync dirs and restart each other.
 5) now the Master can send arbitrary commands and requests (for example, disk space, gpu info) to the Controller and get responses to them.
 6) Also launch /visualiser/index.html for pleasing visualisation
+![Иллюстрация к проекту](https://github.com/s-afanasiev/discrete_tasks/discrete_tasks_visualization.png)
