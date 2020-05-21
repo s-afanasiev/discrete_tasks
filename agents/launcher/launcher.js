@@ -7,7 +7,7 @@ const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 
-const SETT	= read_settings(path.normalize("../settings.json"));
+const SETT	= read_settings(path.normalize("../c_settings.json"));
 const socket = require('socket.io-client')(SETT.client_socket);
 //const socket = require('./socket.io.dev.js')(SETT.client_socket);
 
@@ -55,6 +55,7 @@ const GS = {
     socket_io_init: function() {
         //* 'connect' and 'disconnect' practically not used
         socket.on('connect', function(){
+            //socket.emit("test", true);
             //* prepare identifiers and SEND to master!
             GS.prepare_identifiers().then(arr => {
                 GS.io_to_master({title:"identifiers", kind: "report", done: true, payload: arr});
@@ -69,13 +70,14 @@ const GS = {
         socket.on('manifest', function(data){ 
             //console.log("manifest data Object keys=", Object.keys(data));
             if (data.payload) {
-                if (typeof data.tid == 'undefined') { console.log("ERR: Master wasn't pass task ID !"); }
-                GS.manifest.compare(data.payload).then(res_bool=>{
-                    let parcel = {kind: "report", done: true, title: 'manifest', answer: res_bool, tid: data.tid};
+                if (typeof data.tid == 'undefined') { console.log("WARN: Master wasn't pass task ID !"); }
+                GS.manifest.compare(data.payload).then(obj_bool=>{
+                    //obj_bool = true means that there is different between local and remote manifests
+                    let parcel = {kind: "report", done: true, title: 'manifest', answer: obj_bool, tid: data.tid};
                     GS.io_to_master(parcel);
                 }).catch(ex=>{ 
                     console.log("ERR:",ex);
-                    let parcel = {kind: "report", done: false, title: 'manifest', cause: ex, tid: data.tid};
+                    let parcel = {kind: "report_error", done: false, title: 'manifest', cause: ex, tid: data.tid};
                     GS.io_to_master(parcel);
                 });
             } else { console.log("ERR: socket: incoming: manifest: no payload !"); }
@@ -88,8 +90,10 @@ const GS = {
                 let pids_obj = GS.partner.save_identifiers(data.payload);
                 console.log("save_identifiers(): PIDS:", pids_obj.pids, "PPIDS:", pids_obj.ppids );
                 let is_partner_exist = false;
-                if ((Array.isArray(pids_obj.pids))&&(pids_obj.pids.length > 0)) is_partner_exist = true;
-                if ((Array.isArray(pids_obj.ppids))&&(pids_obj.ppids.length > 0)) is_partner_exist = true;
+                if ((Array.isArray(pids_obj.pids))&&(pids_obj.pids.length > 0)) 
+                    is_partner_exist = true;
+                if ((Array.isArray(pids_obj.ppids))&&(pids_obj.ppids.length > 0)) 
+                    is_partner_exist = true;
                 let parcel = {kind: "report", done: true, title: "same_md5_agents", answer: is_partner_exist, tid: data.tid};
                 GS.io_to_master(parcel);
             } else { console.log("ERR: socket: incoming: same_md5_agents: no payload !"); }
@@ -174,7 +178,8 @@ const GS = {
             console.log("manifest.compare(): typeof manifest:", typeof manifest);
             return new Promise((resolve, reject)=>{
                 if(manifest.length > 0) console.log("got remote manifest:",manifest[0]+"...");
-                else { reject("got emtpy remote manifest..."); return; }
+                //? resolve(false) - means that remote directory was empty
+                else { resolve({is_diff:false}); return; }
                 this.remote = manifest;
                 //* get local files tree to compare with remote
                 get_dir_manifest(GS.partner.folder, prefix="controller")
@@ -191,10 +196,10 @@ const GS = {
                         if((changes.copy_names.length > 0)||(changes.empty_dirs.length > 0)) {
                             GS.manifest.diff = changes;
                             //is_touch_partner_folder Always is True, because Launcher only look for Updates in Controller folder
-                            resolve({is_diff:true, is_touch_partner_folder:true});
+                            resolve({is_diff:true});
                         } else {
                             console.log("remote and local manifests are Match! Nothing to sync...");
-                            resolve({is_diff:false, is_touch_partner_folder:true});
+                            resolve({is_diff:false});
                         }
                     }
                 }).catch(ex => { reject("fail to get Local manifest: " + ex); });

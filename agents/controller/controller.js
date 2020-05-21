@@ -7,7 +7,7 @@ const os = require('os');
 const {spawn, exec} = require('child_process');
 const EventEmitter = require('events');
 
-const SETT	= read_settings(path.normalize("../settings.json"));
+const SETT	= read_settings(path.normalize("../c_settings.json"));
 const socket = require('socket.io-client')(SETT.client_socket);
 //const socket = require('./socket.io.dev.js')(SETT.client_socket);
 
@@ -76,7 +76,7 @@ const GS = {
                 if (typeof data.tid == 'undefined') { console.log("ERR: Master wasn't pass task ID !"); }
                 GS.manifest.compare(data.payload)
                     .then(res_obj => {
-                        //*e.g.: res_obj = {is_diff: true, is_touch_partner_folder: false}
+                        //?e.g.: res_obj = {is_diff: true, is_touch_partner_folder: false}
                         let parcel = {kind: "report", done: true, title: 'manifest', answer: res_obj, tid: data.tid};
                         GS.io_to_master(parcel);
                     }).catch(ex=>{ 
@@ -283,7 +283,8 @@ const GS = {
             //console.log("manifest.compare(): typeof manifest:", typeof manifest);
             return new Promise((resolve, reject)=>{
                 if(manifest.length > 0) console.log("got remote manifest:",manifest[0]+"...");
-                else { reject("got emtpy remote manifest..."); return; }
+                //? resolve(false) - means that remote directory was empty
+                else { resolve({is_diff:false}); return; }
                 this.remote = manifest;
                 //* get local files tree to compare with remote
                 get_dir_manifest_ctol(GS.partner.folder, except="controller")

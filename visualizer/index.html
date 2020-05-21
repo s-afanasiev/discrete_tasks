@@ -20,10 +20,11 @@
 			document.body.onselectstart = function(){return false;}
 			document.body.ondragstart = function(){return false;}			
 			
-			var endvr_server_address = "http://127.0.0.1:80";
+			var endvr_server_address = "http://192.168.0.110:80";
 			
 			var server_;
-			var TSTATES = ["FRESH", "SENT", "GOT", "DONE", "EXTREME", "ERR", "BLOCKED"];
+			//FRESH:0, SENT:1, GOT:2, DONE:3, EXTRA:4, ERR:5, BLOCKED:6, T_OUT:7,
+			var TSTATES = ["FRESH", "SENT", "GOT", "DONE", "EXTRA", "ERR", "BLOCKED", "T_OUT"];
 			
 			onload = function()
 			{
