@@ -5,19 +5,87 @@
     const fs = require('fs');
     const SETT	= read_settings(path.normalize("./settings.json"));
     const UPDATE_FOLD = SETT.update_folder;
-    //const WEB_FULL_NAME = "http://"+SETT.host+":"+SETT.http_p;
-    //const IO_FULL_NAME = "ws://"+SETT.host+":"+SETT.socket_p;
+
     const LOOK_UPDATE_INTERVAL = SETT.update_folder_watch_timer || 60000; // 1 min
     const RUNNER_SPEED = 2000;
 
 
     console.log("UPDATE_FOLD=",UPDATE_FOLD);
-    //const app = require('express')();
-    //config_app(app);
-    //const http_srv = require('http').createServer(req_res_func).listen({ host:SETT.host, port:SETT.http_p });
-    //const io = require('socket.io')(http_srv);
     const Server = require('socket.io');
     const io = new Server(SETT.http_p); // or io = require('socket.io')(3000)
+
+    const JOBS =  {
+        //this is the name of job to send to Agent
+        // 1) нужны ли параметры? 
+        // 2) входим только в void_main и оттуда будет вызываться всё остальное  или идём по все функциям в списке
+        // 3) нужны ли id задачам или вместо id - уникальные имена
+        // 4) на самом деле состояний у задачи может быть в 2 раза больше 
+        "void_main": 
+        {
+			//this is always the first fuction called
+            "if_err": 
+            {
+				"call_":"sample_err_1"
+			},
+            "if_timeout":			
+            {
+				"call_":"sample_timeout_1"
+			},
+            "if_answer": 
+            [
+				{
+					"validate":"is_zero",
+                    "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
+					"if_false": ""
+				},
+				{
+					"validate":"is_one",
+					"if_true": "sample_fuction_one_is_true",
+					//"if_false":""
+				},
+                { 
+                    "novalidate": [ "sample_fuction_not_zero_or_one", 10, "sample_fuction_01" ]
+                }
+            ]
+        },
+        "sample_fuction_02":
+        {
+            "if_err": 
+            {
+				"call_":"sample_err_1"
+			},
+            "if_timeout":			
+            {
+				"call_":"sample_timeout_1"
+			},
+            "if_answer": 
+            [
+				{
+					"validate":"is_zero",
+                    "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
+					"if_false": ""
+				},
+				{
+					"validate":"is_one",
+					"if_true": "sample_fuction_one_is_true",
+					//"if_false":""
+				},
+                { 
+                    "novalidate": [ "sample_fuction_not_zero_or_one", 10, "sample_fuction_01" ]
+                }
+            ]
+        }
+    }
+    
+    //--------------------------------------------
+    function start_jobs() {
+        task_board(JOBS.void_main);
+    }
+
+    //------------JFX------------
+    const JFX = {
+
+    }
 
     //--------CONTROLLER HOUSEKEEPING----------
     const CHK = {
@@ -221,7 +289,7 @@
     //--------/CONTROLLER HOUSEKEEPING----------
 
     //--------TASK TEMPLATES AND FUNCTIONS----------
-    const TTMPLS = {
+    const TEMPLATES = {
         default: {
             timeout: 5000, blocking: true, aging: 600000,
             start_f:    "start__default",
@@ -401,7 +469,7 @@
             console.log("!!!! DEFAULT ERROR FUNCTION !!!!");
             console.log("task name:", task[MGS.TNAME], ", agent sid:", ag_sid);
         };
-}
+    }
 
     //--------/TASK TEMPLATES AND FUNCTIONS----------
     
@@ -458,12 +526,14 @@ const MGS = {
         // at the beginning request dir manifest and send to agents
         get_dir_manifest(UPDATE_FOLD).then(res => {
             console.log("got update manifest...");
-            MGS.manifest.mark_init_ready(res);
+            //MGS.manifest.mark_init_ready(res);
+            this.manifest.is_ready_on_init = true;
+            this.manifest.self = manifest;
             //* light trick at the beginning, when some agents are already connected, but manifest was not ready
             MGS.manifest.notify_deaf();
             //* look for changes in update folder
             MGS.manifest.start_monitor_changes(UPDATE_FOLD);
-        }).catch(ex => { console.log("ex=", ex); });
+        }).catch(ex => { console.log("fail getting manifest: ex:", ex); });
         MGS.call_runner(RUNNER_SPEED);
     },
     set_io_lisners: function(io){
@@ -478,8 +548,6 @@ const MGS = {
 		{
 			MGS.unsubscribe_agent(client); 
 			manage_subscribers(client.id, 'remove');	
-			//console.log("list_of_subscribers");
-			//console.log(list_of_subscribers);
 		});
 
 		client.on('get_socket_id', data =>
@@ -489,27 +557,25 @@ const MGS = {
 			var this_socket_id = client.id;
 			manage_subscribers(this_socket_id, 'add');
 			io.to(this_socket_id).emit('id_assigned', this_socket_id);
-			
-			//console.log("list_of_subscribers");
-			//console.log(list_of_subscribers);
 		});
 		
         client.on('report', data_ => {
             let data = (data_) ? (data_) : {};
             console.log("<<< Agent 'report': ", data.title);
             //let agent_index = MGS.find_agent_index_by_sid(client.id);
-            switch (data.title){
+            switch (data.title)
+            {
                 case "identifiers":
-                    //* 1) data.done - means that everything all right
+                    //? 1) data.done - means that everything all right
                     if (data.done) {
-                        //* payload - this are agent identifiers. 
+                        //? payload - this is agent identifiers. 
                         if (data.payload) {
                             MGS.subscribe_agent(client, data.payload);
-                            //* 3) PUT new TASKS to decide what the agent should do next
+                            //? 3) PUT new TASKS to decide what the agent should do next
                             //MGS.task_board({ t_names: ["manifest", "same_md5_agents"], raws:[JSON.stringify(MGS.manifest.self), JSON.stringify(same_md5_agents)], stage: MGS.FRESH, sid: client.id });
                             MGS.task_board({ t_names: ["manifest"], raws:[JSON.stringify(MGS.manifest.self)], stage: MGS.FRESH, sid: client.id, bundle: ["same_md5_agents"] });
-                            let timetostart_;
-                            //let timetostart_ = 5000 + new Date().getTime();
+                            //? this 5 seconds needs to both agents wait each other on first load
+                            let timetostart_ = 5000 + new Date().getTime();
                             MGS.task_board({ t_names: ["same_md5_agents"], raws:[''], stage: MGS.FRESH, sid: client.id, timetostart: timetostart_, bundle: ["manifest"] });
                         }
                         else { console.log("ERR: Agent's identifiers are empty! Can't subscribe agent !"); }
@@ -537,6 +603,15 @@ const MGS = {
             }
         });
         
+        client.on('report_error', err_ => {
+            let agent_i = find_agent_index_by_sid(client.id);
+            if(typeof agent_i == 'undefined') {
+                //? it seems like error was critical and client was destroyed immediately after this message
+            }
+
+            console.log("error report from " + client.id + ":" + err_);
+        });
+
         client.on('request_action', data_ => {
             let data = (data_) ? (data_) : {};
             console.log("<<< socket 'request_action' event:", data.title);
@@ -598,7 +673,7 @@ const MGS = {
                     if(args.taskboard){
                         //* Mean - COntains emitter object to wait Answer
                         args.payload.taskboard = args.taskboard;
-                        args.client.emit(args.event, args.payload);
+                        args.client.emit(args.event, args.payload, ack=>{console.log("acknowledgements!")});
                     }
                     break;
                 default:
@@ -633,11 +708,11 @@ const MGS = {
                                 tlist[t][MGS.STAGE] = MGS.SENT;
                                 tlist[t][MGS.TIMESENT] = new Date().getTime();
                                 //* 1) call task's start_f to make all necessary actions
-                                //console.log("TTMPLS=",JSON.stringify(TTMPLS));
+                                //console.log("TEMPLATES=",JSON.stringify(TEMPLATES));
                                 //console.log("tlist[t][MGS.TMPL]=", tlist[t][MGS.TMPL]);
-                                TFX[TTMPLS[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
                                 //* 2) if task has 'blocking' type - then exit Tasklist
-                                if (TTMPLS[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
+                                if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                                 break;
                             }
 
@@ -646,12 +721,12 @@ const MGS = {
                             //* 1) get TIMEOUT from TMPL
                             timelast = new Date().getTime() - tlist[t][MGS.TIMESENT];
                             //* 2) Compare CUR_TIME with TIMEPUSH
-                            if (timelast > TTMPLS[tlist[t][MGS.TMPL]].timeout) {
-                                TFX[TTMPLS[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            if (timelast > TEMPLATES[tlist[t][MGS.TMPL]].timeout) {
+                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
                             }
                             //* 3) if (TIMEOUT) => TMPL.timeout_f()
                             //*    else exit Tasklist
-                            if (TTMPLS[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
+                            if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             //else { console.log("runner: case SENT: non-blocking task!"); }
                             break;
                         case MGS.GOT:
@@ -659,21 +734,21 @@ const MGS = {
                             tlist[t][MGS.STAGE] = MGS.EXTRA;
                             tlist[t][MGS.TIMEEXTRA] = new Date().getTime();
                             //* 2) exec TMPL.complete_f()
-                            TFX[TTMPLS[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            TFX[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
                             //* 3) exit Tasklist
-                            if (TTMPLS[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
+                            if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             break;
                         case MGS.EXTRA:
                             //* TODO: need to make a timeout decision !
                             //* 1) get TIMEOUT from TMPL
                             timelast = new Date().getTime() - tlist[t][MGS.TIMEEXTRA];
                             //* 2) Compare CUR_TIME with TIMEEXTRA
-                            if (timelast > TTMPLS[tlist[t][MGS.TMPL]].timeout) {
-                                TFX[TTMPLS[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            if (timelast > TEMPLATES[tlist[t][MGS.TMPL]].timeout) {
+                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
                             }
                             //* 3) if (TIMEOUT) => TMPL.error_f()
                             //*    else exit Tasklist
-                            if (TTMPLS[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
+                            if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             //else { console.log("runner: case EXTRA: non-blocking task!"); }
                             break;
                         case MGS.DONE:
@@ -681,8 +756,8 @@ const MGS = {
                             break;
                         case MGS.ERR:
                             //* TODO: maybe repeat task or chain of tasks ???
-                            TFX[TTMPLS[tlist[t][MGS.TMPL]].error_f](tlist[t], MGS.agents[i][MGS.SID]);
-                            if (TTMPLS[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
+                            TFX[TEMPLATES[tlist[t][MGS.TMPL]].error_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             break;
                         case MGS.BLOCKED:
                             //* TODO: need to make a timeout decision !
@@ -690,11 +765,11 @@ const MGS = {
                             break;
                         case undefined:
                             console.log("ERR: call_runner(): STAGE undefined !");
-                            //if (TTMPLS[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
+                            //if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             break;
                         default:
                             console.log("ERR: call_runner(): unknown STAGE !");
-                            //if (TTMPLS[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
+                            //if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             break;
                     }
                     //* break tlist loop
@@ -709,7 +784,7 @@ const MGS = {
         let arg = (arg_)?(arg_):{};
         if (Object.keys(arg).length == 0) { console.log("ERR: task_board(): entry params are empty !"); return; }
         
-        //* arg.sid == "all" - it means put task to all Agents
+        //? arg.sid == "all" - it means put task to all Agents
         if(arg.sid == "all") {
             for (let a in MGS.agents) {
                 for (let tn in arg.t_names) {
@@ -721,16 +796,17 @@ const MGS = {
                     one_task[MGS.TIMEPUSH] = new Date().getTime();
                     one_task[MGS.TIMETOSTART] = arg.timetostart;
                     one_task[MGS.BUNDLE] = arg.bundle;
+                    //? explicitly specified template
                     if (arg.template) { one_task[MGS.TMPL] = arg.template; }
                     else {
-                        //* If Exist template with name that mathes with task name:
-                        if (TTMPLS[arg.t_names[tn]]) { 
+                        //? If template Exists with name that matches with task name:
+                        if (TEMPLATES[arg.t_names[tn]]) { 
                             one_task[MGS.TMPL] = arg.t_names[tn]; 
-                            one_task[MGS.AGING] = TTMPLS[arg.t_names[tn]]['aging']; 
+                            one_task[MGS.AGING] = TEMPLATES[arg.t_names[tn]]['aging']; 
                         }
                         else {
                             one_task[MGS.TMPL] = "default"; 
-                            one_task[MGS.AGING] = TTMPLS['default']['aging']; 
+                            one_task[MGS.AGING] = TEMPLATES['default']['aging']; 
                         }
                     }
                     if (arg.t_names[tn+1]) { one_task[MGS.NEXT_TID] = MGS.gcounter + 1; }
@@ -746,14 +822,17 @@ const MGS = {
                 if ( checks.done == false) { console.log(checks.msg); return; }
                 
                 let agent_index = MGS.find_agent_index_by_sid(arg.sid);
-                //* if tlist of this agent does not exist yet
+                if (typeof agent_index == 'undefined') {
+                    console.log("task_board ERR: fail to find agent by sid !");
+                    return;
+                }
+                //? if tlist of this agent does not exist yet
                 let t_list = MGS.agents[agent_index][MGS.TASKS];
-                //let check_tasklist_exist = Array.isArray(MGS.agents[agent_index][MGS.TASKS]);
+                //? if Agent does not have its own tasklist, let's create it
                 if (!Array.isArray(t_list)) { MGS.agents[agent_index][MGS.TASKS] = []; }
-                
+                //? loop for all tasks of Agent's tasklist 
                 for (let tn=0; tn < arg.t_names.length; tn++) {
                     //console.log("arg.t_names["+tn+"]="+arg.t_names[tn]);
-                    //console.log("arg.t_names["+(tn+1)+"]="+arg.t_names[tn+1]);
                     let one_task = [];
                     one_task[MGS.TID] = ++MGS.gcounter;
                     one_task[MGS.TNAME] = arg.t_names[tn];
@@ -765,20 +844,20 @@ const MGS = {
                     if (arg.template) { one_task[MGS.TMPL] = arg.template; }
                     else {
                         //* If Exist template with name that mathes with task name:
-                        if (TTMPLS[arg.t_names[tn]]) {
+                        if (TEMPLATES[arg.t_names[tn]]) {
                             one_task[MGS.TMPL] = arg.t_names[tn];
                             //time after runner will erase this task from tasklist
-                            one_task[MGS.AGING] = TTMPLS[arg.t_names[tn]]['aging'];
+                            one_task[MGS.AGING] = TEMPLATES[arg.t_names[tn]]['aging'];
                         }
                         else {
                             one_task[MGS.TMPL] = "default"; 
                             //time after runner will erase this task from tasklist
-                            one_task[MGS.AGING] = TTMPLS['default']['aging'];
+                            one_task[MGS.AGING] = TEMPLATES['default']['aging'];
                         }
                     }
                     //* if exist next task in chain, then make pointer to next tid
                     if (arg.t_names[tn+1]) { one_task[MGS.NEXT_TID] = MGS.gcounter + 1; }
-                    //- Put new Task in Agent's tasklist !
+                    //? Put new Task in Agent's tasklist !
                     MGS.agents[agent_index][MGS.TASKS].push(one_task);
                 }
                 //if (arg.block_partner) {}
@@ -974,6 +1053,7 @@ const MGS = {
         }
         return res;
     },
+    //returns number or undefined
     find_agent_index_by_sid: function(sid){
         let requester_index;
         for (let i in this.agents) {
