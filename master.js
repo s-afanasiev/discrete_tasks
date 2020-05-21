@@ -299,7 +299,7 @@
         },
         manifest: {
             timeout: 15000, blocking: false, aging: 600000,
-            start_f:    "start__default",
+            start_f:    "start__manifest",
             complete_f: "complete__manifest", //own
             timeout_f:  "timeout__default",
             error_f:    "error__default",
@@ -384,8 +384,12 @@
                 this.start__default(task, ag_sid);
             };
         };
+        this.start__manifest = function(task, ag_sid) {
+            task[MGS.STAGE] = MGS.SENT;
+            let parcel = { tid: task[MGS.TID], payload: JSON.stringify(MGS.manifest.self) };
+            io.to(ag_sid).emit(task[MGS.TNAME], parcel);
+        };
         this.start__same_md5_agents = function(task, ag_sid){
-            //let agent_index = MGS.find_agent_index_by_sid(ag_sid);
             let same_md5_agents = MGS.find_all_same_md5_agents( {sid: ag_sid} );
             task[MGS.RAW] = JSON.stringify(same_md5_agents);
             this.start__default(task, ag_sid);
@@ -400,59 +404,73 @@
         };
         this.complete__manifest = function(task, ag_sid) {
             //* if task was in bundle with another task, e.g. 'manifest' with 'same_md5_agents'
-            //console.log("__complete__manifest: task=", task);
-            if ( typeof task[MGS.BUNDLE] == 'undefined' ) {
-                //* means, that is standalone task
-                task[MGS.BUNDLE] == ['same_md5_agents'];
-                //let agent_index = MGS.find_agent_index_by_sid(ag_sid);
-                let same_md5_agents = MGS.find_all_same_md5_agents({sid: ag_sid});
-                MGS.task_board( {t_names:['same_md5_agents'], raws: [JSON.stringify(same_md5_agents)], stage: MGS.FRESH, sid: ag_sid } );
-                task[MGS.STAGE] = MGS.DONE;
+            if ( typeof task[MGS.BUNDLE] == 'same_md5_agents' ) {
+                MGS.task_board( {t_names:['same_md5_agents'],
+                                timetostart_: (5000 + new Date().getTime()),
+                                stage: MGS.FRESH, 
+                                sid: ag_sid } );
             }
-            else { task[MGS.STAGE] = MGS.DONE; }
+            task[MGS.STAGE] = MGS.DONE;
         };
         this.complete__same_md5_agents = function(task, ag_sid) {
-            //- because there was a chain of tasks 'manifest'->'same_md5_agents' and we need all of answers
-            // TODO: make sure about types of answers:
-            //console.log("task[MGS.ANSWER]=", task[MGS.ANSWER]);
             let is_partner_exist = task[MGS.ANSWER]; // true || false
-            //let prev_manifest_task = MGS.find_task_by_next_tid({tid: task[MGS.TID], sid: ag_sid});
-            let prev_manifest_task = MGS.find_prev_task_by_tname({tname: 'manifest', sid: ag_sid});
-            let t_names = [], raws = [];
-            //console.log("!!!___prev_manifest_task=", prev_manifest_task);
-            if (typeof(prev_manifest_task) == "undefined") 
-            {
-                //* FOr example 'same_md5_agents' was a standalone task
-                console.log("WARN: Fail to find prev chain task: tid:", task[MGS.TID]);
-                if(is_partner_exist) {}
-                else {  t_names = ['start_agent']; raws = ['']; }
-            }
-            else 
-            {   //* diff_obj = {is_diff: true, is_touch_partner_folder: false}
-                let diff_obj = prev_manifest_task[MGS.ANSWER]; // true || false
-                if (typeof diff_obj != 'object') {
-                    console.log("ERR: complete__same_md5_agents(): manifest Answer is Not an Object!");
-                }
-                if (diff_obj.is_diff) {
-                    if (diff_obj.is_touch_partner_folder) {   
-                        if(is_partner_exist) { t_names = ['kill_agent', 'sync_dirs', 'start_agent']; raws = ['', '' , '']; }
-                        else {  t_names = ['sync_dirs', 'start_agent']; raws = ['', '']; }
-                    }
-                    else {
-                        if(is_partner_exist) { t_names = ['sync_dirs']; raws = ['']; }
-                        else {  t_names = ['sync_dirs', 'start_agent']; raws = ['', '']; }
-                    }
+            //? maybe there was a chain of tasks 'manifest'->'same_md5_agents' because based on this info we decide what agent will next chain do
+            if ( typeof task[MGS.BUNDLE] == 'manifest' ) {
+                let prev_manifest_task = MGS.find_prev_task_by_tname({tname: 'manifest', sid: ag_sid});
+                if (prev_manifest_task == -1) {
+                    //? Значит мы хотели найти предыдущее задание типа 'manifest', но почему-то не нашли
+                    console.log("ERR: Fail to find previous 'manifest' task! tid=", task[MGS.TID]);               
                 }
                 else {
-                    if(is_partner_exist) { } //do nothing
-                    else { t_names = ['start_agent']; raws = ['']; }
+                    //? typeof diff = Boolean || {is_diff: true, is_touch_partner_folder: false}
+                    let diff = prev_manifest_task[MGS.ANSWER];
+                    
+                    let t_names;
+                    //? answer of launcher-------------
+                    if (typeof diff == 'boolean') {
+                        if (diff) {
+                            if(is_partner_exist) { t_names = ['kill_agent', 'sync_dirs', 'start_agent']; }
+                            else { t_names = ['sync_dirs', 'start_agent']; }
+                        }
+                        else {
+                            if(is_partner_exist) { }
+                            else { t_names = ['start_agent']; }
+                        }
+                    }
+                    //? answer of controller----------
+                    else if (typeof diff == 'object') {
+                        if (diff.is_diff) {
+                            if (diff.is_touch_partner_folder) {   
+                                if(is_partner_exist) { t_names = ['kill_agent', 'sync_dirs', 'start_agent'];  }
+                                else {  t_names = ['sync_dirs', 'start_agent']; }
+                            }
+                            else {
+                                if(is_partner_exist) { t_names = ['sync_dirs']; }
+                                else {  t_names = ['sync_dirs', 'start_agent']; }
+                            }
+                        }
+                    }
+                }
+        
+                //? if agent is Controller then send him 'housekeeping' task
+                let agent_index = MGS.find_agent_index_by_sid(ag_sid);
+                if (agent_index == -1) {
+                    console.log("complete__same_md5_agents(): fail to get agent_index");
+                    return;
+                }
+                if(MGS.agents[agent_index][MGS.TYPE] == "controller") { 
+                    t_names.push('housekeeping'); 
+                }
+                MGS.task_board( {t_names:t_names, stage: MGS.FRESH, sid: ag_sid } );
+                this.complete__default(task, ag_sid);
+            } 
+            
+            else {
+                //? Means that this task 'same_md5_agents' was a standalone task
+                if(is_partner_exist == false) {
+                    MGS.task_board( {t_names:['start_agent'], sid: ag_sid, stage: MGS.FRESH} );
                 }
             }
-            let agent_index = MGS.find_agent_index_by_sid(ag_sid);
-            if(MGS.agents[agent_index][MGS.TYPE] == "controller") { t_names.push('housekeeping'); raws.push(''); }
-            MGS.task_board( {t_names:t_names, raws: raws, stage: MGS.FRESH, sid: ag_sid } );
-            //- the task completes itself so that the runner can skip it later
-            this.complete__default(task, ag_sid);
         };
         this.complete__housekeeping = function(task, ag_sid){
             CHK_FX.first_dump(task, ag_sid);
@@ -571,12 +589,7 @@ const MGS = {
                         //? payload - this is agent identifiers. 
                         if (data.payload) {
                             MGS.subscribe_agent(client, data.payload);
-                            //? 3) PUT new TASKS to decide what the agent should do next
-                            //MGS.task_board({ t_names: ["manifest", "same_md5_agents"], raws:[JSON.stringify(MGS.manifest.self), JSON.stringify(same_md5_agents)], stage: MGS.FRESH, sid: client.id });
-                            MGS.task_board({ t_names: ["manifest"], raws:[JSON.stringify(MGS.manifest.self)], stage: MGS.FRESH, sid: client.id, bundle: ["same_md5_agents"] });
-                            //? this 5 seconds needs to both agents wait each other on first load
-                            let timetostart_ = 5000 + new Date().getTime();
-                            MGS.task_board({ t_names: ["same_md5_agents"], raws:[''], stage: MGS.FRESH, sid: client.id, timetostart: timetostart_, bundle: ["manifest"] });
+                            MGS.task_board({ t_names: ["manifest"], stage: MGS.FRESH, sid: client.id, bundle: ["same_md5_agents"] });
                         }
                         else { console.log("ERR: Agent's identifiers are empty! Can't subscribe agent !"); }
                     } 
@@ -730,12 +743,12 @@ const MGS = {
                             //else { console.log("runner: case SENT: non-blocking task!"); }
                             break;
                         case MGS.GOT:
-                            //* 1) change STAGE to EXTRA
+                            //? 1) change STAGE to EXTRA
                             tlist[t][MGS.STAGE] = MGS.EXTRA;
                             tlist[t][MGS.TIMEEXTRA] = new Date().getTime();
-                            //* 2) exec TMPL.complete_f()
+                            //? 2) exec TMPL.complete_f()
                             TFX[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
-                            //* 3) exit Tasklist
+                            //? 3) exit Tasklist
                             if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             break;
                         case MGS.EXTRA:
@@ -782,6 +795,7 @@ const MGS = {
         //* arg = { t_names:Array, raws:Array, stage:Number, sid:String, template:Object }
         //* 'stage' can be: "new", "gone", "done", maybe also "err"
         let arg = (arg_)?(arg_):{};
+        if (!arg.raws) arg.raws = [];
         if (Object.keys(arg).length == 0) { console.log("ERR: task_board(): entry params are empty !"); return; }
         
         //? arg.sid == "all" - it means put task to all Agents
@@ -802,6 +816,7 @@ const MGS = {
                         //? If template Exists with name that matches with task name:
                         if (TEMPLATES[arg.t_names[tn]]) { 
                             one_task[MGS.TMPL] = arg.t_names[tn]; 
+                            //? how much this task will live in tasklist and then deleted 
                             one_task[MGS.AGING] = TEMPLATES[arg.t_names[tn]]['aging']; 
                         }
                         else {
