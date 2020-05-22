@@ -95,10 +95,10 @@
         CHECK_VAL:0, RES_VAL:1, LOGIC_OP:2, TRUE_FU:3, FALSE_FU:4, 
         OUT_TIME:6, TRY_AGN_TIME:7, ADD_PARAM:8,
         LIST: [
-            [1, "proc", "auto", 0, "ass.exe", [[1, null, "int_lte", "tfunc1", "ffunc1"], [1, null, "int_gte", "tfunc1_2", "ffunc1_2"], [1, null, "int_is_equal", "tfunc1_2", "ffunc1_2"]], 15000, 30000, 0],
-            [2, "disk", "auto", 0, "C:", [[26232171968, null, "int_lte", "low_disk_space_true", "big_disk_space"]], 20000, 60000, 0],
-            [3, "exec_cmd", "manual", 0, "calc", [[12.0, null, "compare_versions", "exec_cmd_ok", "exec_cmd_fail"]], 20000, 0, 0],
-            [4, "nvidia_smi", "manual", 0, "all info", [[1, null, "int_lte", "gpu_absent", "gpu_more_than_1"]], 60000, 0, 0]
+            [1, "proc", "auto", 0, "ass.exe", [[1, null, "int_lte", "tfunc1", "ffunc1"], [1, null, "int_gte", "tfunc1_2", "ffunc1_2"], [1, null, "int_is_equal", "tfunc1_2", "ffunc1_2"]], 15000, 30000, 0]
+            //[2, "disk", "auto", 0, "C:", [[26232171968, null, "int_lte", "low_disk_space_true", "big_disk_space"]], 20000, 60000, 0],
+            //[3, "exec_cmd", "manual", 0, "calc", [[12.0, null, "compare_versions", "exec_cmd_ok", "exec_cmd_fail"]], 20000, 0, 0],
+            //[4, "nvidia_smi", "manual", 0, "all info", [[1, null, "int_lte", "gpu_absent", "gpu_more_than_1"]], 60000, 0, 0]
             //[6, "nvidia_smi", "manual", 0, "memory usage", [[7, null, "int_gte", "gpu_overload", "gpu_free"]], 20000, 0, 0]
         ],
         find_order_by_id: function(id){
@@ -292,14 +292,14 @@
     //--------TASK TEMPLATES AND FUNCTIONS----------
     const TEMPLATES = {
         default: {
-            timeout: 5000, blocking: true, aging: 600000,
+            timeout: 5000, blocking: true, aging: 300000,
             start_f:    "start__default",
             complete_f: "complete__default",
             timeout_f:  "timeout__default",
             error_f:    "error__default",
         },
         manifest: {
-            timeout: 15000, blocking: false, aging: 600000,
+            timeout: 15000, blocking: false, aging: 300000,
             start_f:    "start__manifest",
             complete_f: "complete__manifest", //own
             timeout_f:  "timeout__default",
@@ -334,21 +334,21 @@
             error_f:    "error__default",
         },
         disk: {
-            timeout: 5000, blocking: false, aging: 600000,
+            timeout: 5000, blocking: false, aging: 300000,
             start_f:    "start__default", 
             complete_f: "complete__chk", //chk = controller housekeeping
             timeout_f:  "timeout__default",
             error_f:    "error__default",
         },
         exec_cmd: {
-            timeout: 20000, blocking: false, aging: 600000,
+            timeout: 20000, blocking: false, aging: 300000,
             start_f:    "start__default", 
             complete_f: "complete__chk", //chk = controller housekeeping
             timeout_f:  "timeout__default",
             error_f:    "error__default",
         },
         nvidia_smi: {
-            timeout: 5000, blocking: false, aging: 600000,
+            timeout: 5000, blocking: false, aging: 300000,
             start_f:    "start__default", 
             complete_f: "complete__chk", //chk = controller housekeeping
             timeout_f:  "timeout__default",
@@ -386,9 +386,11 @@
             };
         };
         this.start__manifest = function(task, ag_sid) {
-            console.log("sending manifest to agent:"+MGS.manifest.self);
+            let stringified_manifest = JSON.stringify(MGS.manifest.self);
+            console.log("sending manifest to agent:", stringified_manifest);
             task[MGS.STAGE] = MGS.SENT;
-            let parcel = { tid: task[MGS.TID], payload: JSON.stringify(MGS.manifest.self) };
+            //let parcel = { tid: task[MGS.TID], payload: stringified_manifest };
+            let parcel = { tid: task[MGS.TID], payload: MGS.manifest.self };
             io.to(ag_sid).emit(task[MGS.TNAME], parcel);
         };
         this.start__same_md5_agents = function(task, ag_sid){
@@ -441,21 +443,22 @@
                     if (MGS.agents[agent_index][MGS.TYPE] == "controller") 
                     {     
                         if (diff.is_diff) {
-                            console.log('---5');
+                            console.log('---11');
                             if (diff.is_touch_partner_folder) { 
-                                console.log('---6');  
+                                console.log('---12');  
                                 if(is_partner_exist) { t_names = ['kill_agent', 'sync_dirs', 'start_agent'];  }
                                 else {  t_names = ['sync_dirs', 'start_agent']; }
                             }
                             else {
-                                console.log('---7');
+                                console.log('---13');
                                 if(is_partner_exist) { t_names = ['sync_dirs']; }
                                 else {  t_names = ['sync_dirs', 'start_agent']; }
                             }
                         } 
                         else {
-                            if(is_partner_exist) {  }
-                            else {  t_names = ['start_agent']; }
+                            console.log('---14');
+                            if(is_partner_exist) { console.log('---15'); }
+                            else {  t_names = ['start_agent']; console.log('---16'); }
                         }
                         if(!Array.isArray(t_names)) t_names = [];
                         t_names.push('housekeeping');
@@ -569,16 +572,13 @@ const MGS = {
     TID:0, TNAME:1, STAGE:2, RAW:3, ANSWER:4, NEXT_TID:5, TMPL:6, TIMEPUSH:7, TIMESENT:8, TIMEEXTRA:9, TIMETOSTART:10, BUNDLE: 11, AGING: 12,
     FRESH:0, SENT:1, GOT:2, DONE:3, EXTRA:4, ERR:5, BLOCKED:6, T_OUT:7, //STAGES !
     main: function(){
-        //TFX = new TaskFunctions();
-        MGS.set_io_lisners(io);
         // at the beginning request dir manifest and send to agents
         get_dir_manifest(UPDATE_FOLD).then(res => {
-            console.log("got update manifest:"+typeof res);
+            console.log("got update manifest:", res);
             //MGS.manifest.mark_init_ready(res);
             this.manifest.is_ready_on_init = true;
             this.manifest.self = res;
-            //* light trick at the beginning, when some agents are already connected, but manifest was not ready
-            MGS.manifest.notify_deaf();
+            MGS.set_io_lisners(io);
             //* look for changes in update folder
             MGS.manifest.start_monitor_changes_2(UPDATE_FOLD);
         }).catch(ex => { console.log("fail getting manifest: ex:", ex); });
@@ -741,10 +741,11 @@ const MGS = {
                 let tlist = MGS.agents[i][MGS.TASKS];
                 //console.log("runner: agent:", i, " tlist length:", tlist.length);
                 //* goes to the agent's tlist
-                for (let t in tlist) {
+                for (let t in tlist) 
+                {
                     let tasks_loop_break = false;
                     let timelast = null;
-                    
+
                     switch (tlist[t][MGS.STAGE]) {
                         case MGS.FRESH:
                             //console.log("runner: TIMETOSTART=", tlist[t][MGS.TIMETOSTART]);
@@ -823,6 +824,15 @@ const MGS = {
                     }
                     //* break tlist loop
                     if (tasks_loop_break) break;
+                }
+                for (let t in tlist) {
+                    //Delete Task if its AGE has Expired
+                    let now = new Date().getTime();
+                    if ( (tlist[t][MGS.TIMEPUSH] + tlist[t][MGS.AGING]) < now ) {
+                        console.log("delete Aging task! length before=", tlist.length);
+                        tlist.shift(t);
+                        console.log("delete Aging task! length after=", tlist.length);
+                    }
                 }
             }
         }, speed);
@@ -926,20 +936,22 @@ const MGS = {
                 //? Find Task in Tasklist and change STAGE
                 if (arg.tid) {
                     let task = MGS.find_task_by_tid_and_sid({tid: arg.tid, sid: arg.sid});
-                    console.log("task_board(): stage GOT: task=", JSON.stringify(task));
-                    console.log("task_board(): stage GOT: arg=", JSON.stringify(arg));
+                    if (typeof task != 'undefined') 
+                        console.log("task_board(): stage GOT: task=", task[MGS.TNAME]);
+                    else console.log("task_board(): stage GOT: probably, this task was deleted...");
+                    
                     if (Array.isArray(task)){ 
                         task[MGS.STAGE] = arg.stage; 
                         if (typeof arg.answer != 'undefined') { task[MGS.ANSWER] = arg.answer;  }
                     }
-                    else { console.log("ERR: task_board(): task type is Not an Array !"); }
+                    else { console.log("ERR: task_board(): task type is Not an Array or task was deleted!"); }
                 } 
                 else { console.log("ERR: task_board(): STAGE 'GOT': No TID !"); }
             }
             else { console.log("ERR: task_board(): unexpected STAGE !"); }
         }
         function check_tnames_and_raws(arg){
-            console.log("checking params: t_names=", arg.t_names);
+            //console.log("checking params: t_names=", arg.t_names);
             let checks = {};
             checks.done = true;
             if (!Array.isArray(arg.t_names)) {checks.msg = "ERR: task_board(): 't_names' param must be an Array type !"; checks.done = false;}
@@ -998,13 +1010,21 @@ const MGS = {
             get_dir_manifest(upd_fold).then(manifest => {
                 MGS.manifest.self = manifest;
                 let is_diff = MGS.manifest.compare(old_manifest, manifest);
+                console.log("is_diff=", is_diff);
                 if (is_diff) {
                     MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: "all", bundle:'same_md5_agents' });
-                    setTimeout(()=>{ start_monitor_changes_2(upd_fold); }, LOOK_UPDATE_INTERVAL);
                 }
+                setTimeout(()=>{ 
+                    console.log("start_monitor_changes_2(): calling myself:", upd_fold);
+                    this.start_monitor_changes_2(upd_fold); 
+                }, LOOK_UPDATE_INTERVAL);
+
             }).catch(ex => { 
                 console.log("ERR:", ex); 
-                setTimeout(()=>{ start_monitor_changes_2(upd_fold); }, LOOK_UPDATE_INTERVAL);
+                setTimeout(()=>{ 
+                    console.log("start_monitor_changes_2(): calling myself::", upd_fold);
+                    this.start_monitor_changes_2(upd_fold); 
+                }, LOOK_UPDATE_INTERVAL);
             });
         },
         compare: function(old, fresh){
@@ -1200,8 +1220,12 @@ const MGS = {
                 for (let t = tlist.length-1; t >= 0; t--) {
                     //console.log("find_task_by_next_tid(): tlist["+t+"]="+tlist[t]);
                     if (tlist[t][MGS.TNAME] == arg.tname) {
-                        task = tlist[t];
-                        break;
+                        //? Now look if it task has answer?
+                        if (tlist[t][MGS.STAGE] >= MGS.GOT) {
+                        //? OR: if (tlist[t][MGS.ANSWER]) {
+                            task = tlist[t];
+                            break;
+                        }
                     }
                 }
                 return task;    

@@ -76,6 +76,7 @@ const GS = {
                 if (typeof data.tid == 'undefined') { console.log("ERR: Master wasn't pass task ID !"); }
                 GS.manifest.compare(data.payload)
                     .then(res_obj => {
+                        console.log("res_obj=", JSON.stringify(res_obj));
                         //?e.g.: res_obj = {is_diff: true, is_touch_partner_folder: false}
                         let parcel = {kind: "report", done: true, title: 'manifest', answer: res_obj, tid: data.tid};
                         GS.io_to_master(parcel);
@@ -98,10 +99,10 @@ const GS = {
                 if (typeof data.tid == 'undefined') { console.log("ERR: Master wasn't pass task ID !"); }
                 let pids_obj = GS.partner.save_identifiers(data.payload);
                 //console.log("save_identifiers(): PIDS:", pids_obj.pids, "PPIDS:", pids_obj.ppids );
-//                let is_partner_exist = false;
-//                if ((Array.isArray(pids_obj.pids))&&(pids_obj.pids.length > 0)) is_partner_exist = true;
-//                if ((Array.isArray(pids_obj.ppids))&&(pids_obj.ppids.length > 0)) is_partner_exist = true;
-                let parcel = {kind: "report", done: true, title: "same_md5_agents", answer: pids_obj, tid: data.tid};
+               let is_partner_exist = false;
+               if ((Array.isArray(pids_obj.pids))&&(pids_obj.pids.length > 0)) is_partner_exist = true;
+               if ((Array.isArray(pids_obj.ppids))&&(pids_obj.ppids.length > 0)) is_partner_exist = true;
+                let parcel = {kind: "report", done: true, title: "same_md5_agents", answer: is_partner_exist, tid: data.tid};
                 GS.io_to_master(parcel);
             } else { console.log("ERR: socket: incoming: same_md5_agents: no payload !"); }
         });
@@ -289,8 +290,10 @@ const GS = {
                 //* get local files tree to compare with remote
                 get_dir_manifest_ctol(GS.partner.folder, except="controller")
                 .then(loc_manif => {
+                    //this.local = loc_manif;
+                    this.local = JSON.stringify(loc_manif);
+                    this.local = JSON.parse(this.local);
                     //console.log("LOCAL MANIFEST =", loc_manif);
-                    this.local = loc_manif;
                     if ((this.remote) && (this.local)) {
                         //console.log("comparing manifests...");
                         //*this func() will call GS.ready_to_sync_dirs(copy_names)
@@ -862,7 +865,7 @@ function compare_manifests_1rp1lp(local, remote)
     let remote_empty_dirs = get_empty_dirs(remote);
     empty_dirs = DiffArrays(remote_empty_dirs, local_empty_dirs);
     
-    in_launcher_folder.concat(reduce_changes_to_launcher_folder(empty_dirs));
+    in_launcher_folder = in_launcher_folder.concat(reduce_changes_to_launcher_folder(empty_dirs));
     
     local = trim_empty_dirs(local);
     remote = trim_empty_dirs(remote);
@@ -887,10 +890,11 @@ function compare_manifests_1rp1lp(local, remote)
     local = local.sort(sort_by_name);
     remote = remote.sort(sort_by_name);
     //2.4. go to compare sizes or later by Date
+    console.log("copy_names before=", copy_names);
     let names_diff_by_size = compare_intersec_by_size_or_date(local, remote);
     copy_names = copy_names.concat(names_diff_by_size);
-    
-    in_launcher_folder.concat(reduce_changes_to_launcher_folder(copy_names));
+    console.log("copy_names after=", copy_names);
+    in_launcher_folder = in_launcher_folder.concat(reduce_changes_to_launcher_folder(copy_names));
     console.log("in_launcher_folder =", in_launcher_folder);
     //4. COPY CHANGES
     return {copy_names:copy_names, empty_dirs:empty_dirs, in_launcher_folder:in_launcher_folder};
@@ -960,7 +964,10 @@ function compare_manifests_1rp1lp(local, remote)
                 if (loc[i][1] != rem[i][1]) {
                     names_diff_by_size_or_date.push(rem[i][0]);
                 } else {
-                    if (Date.parse(rem[i][2]) > loc[i][2].getTime()) {
+                    rem[i][2] = (typeof rem[i][2] == 'string') ? (Date.parse(rem[i][2])) : (rem[i][2].getTime());
+                    loc[i][2] = (typeof loc[i][2] == 'string') ? (Date.parse(loc[i][2])) : (loc[i][2].getTime());
+                    //if (Date.parse(rem[i][2]) > loc[i][2].getTime()) {
+                    if (rem[i][2] > loc[i][2]) {
                         names_diff_by_size_or_date.push(rem[i][0]);
                     }
                 }
@@ -970,15 +977,17 @@ function compare_manifests_1rp1lp(local, remote)
         return names_diff_by_size_or_date;
     }
     
-    function reduce_changes_to_launcher_folder(remote){
+    function reduce_changes_to_launcher_folder(copy_names){
         // const folder = './controller';
-        let trim_remote = new Array();
-        for (let i in remote) {
-            if (remote[i][0].startsWith("\\launcher\\")) {
-                trim_remote.push(remote[i]);
+        let trim_ = [];
+        for (let i in copy_names) {
+            if (copy_names[i].startsWith("\\launcher\\")) {
+                console.log("YES !");
+                trim_.push(copy_names[i]);
             }
         }
-        return trim_remote;
+        console.log("trim_ =", trim_);
+        return trim_;
     }
 }
 //* sync

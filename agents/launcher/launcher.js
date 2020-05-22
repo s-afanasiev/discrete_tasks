@@ -174,8 +174,8 @@ const GS = {
         diff: null,
                 
         compare: function(manifest) {
+            //? it was stringified with JSON.stringify(Array)
             if (typeof manifest == "string") { manifest = JSON.parse(manifest); }
-            console.log("manifest.compare(): typeof manifest:", typeof manifest);
             return new Promise((resolve, reject)=>{
                 if(manifest.length > 0) console.log("got remote manifest:",manifest[0]+"...");
                 //? resolve(false) - means that remote directory was empty
@@ -184,10 +184,14 @@ const GS = {
                 //* get local files tree to compare with remote
                 get_dir_manifest(GS.partner.folder, prefix="controller")
                 .then(loc_manif => {
-                    this.local = loc_manif;
+                    //this.local = loc_manif;
+                    this.local = JSON.stringify(loc_manif);
+                    this.local = JSON.parse(this.local);
                     
                     console.log("LOCAL MANIFEST=", this.local);
                     console.log("REMOTE MANIFEST=", this.remote);
+                    console.log("typeof LOCAL 2=", typeof this.local[0][2]);
+                    console.log("typeof REMOTE 2=", typeof this.remote[0][2]);
                     
                     if ((this.remote) && (this.local)) {
                         console.log("comparing manifests...");
@@ -638,7 +642,11 @@ function compare_manifests_1rp1lp(local, remote)
                 if (loc[i][1] != rem[i][1]) {
                     names_diff_by_size_or_date.push(rem[i][0]);
                 } else {
-                    if (Date.parse(rem[i][2]) > loc[i][2].getTime()) {
+                    rem[i][2] = (typeof rem[i][2] == 'string') ? (Date.parse(rem[i][2])) : (rem[i][2].getTime());
+                    loc[i][2] = (typeof loc[i][2] == 'string') ? (Date.parse(loc[i][2])) : (loc[i][2].getTime());
+
+                    //if (Date.parse(rem[i][2]) > loc[i][2].getTime()) {
+                    if (rem[i][2] > loc[i][2]) {
                         names_diff_by_size_or_date.push(rem[i][0]);
                     }
                 }
