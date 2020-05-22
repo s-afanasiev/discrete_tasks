@@ -1,6 +1,6 @@
 {
 	"http_p": "80",
-	"client_socket": "http://192.168.0.110",
+	"client_socket": "http://192.168.1.131",
 	"update_folder": "\\\\ita5\\TMP\\test",
 	"update_folder_watch_timer": 60000
 }

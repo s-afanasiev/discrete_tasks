@@ -15,26 +15,50 @@
     //const io = require('socket.io')(server)
     const io = require('socket.io')(SETT.port); 
 
+    //--------Your Fortran-------
     const JOBS =  {
+        gcounter: 0,
+        
         //this is the name of job to send to Agent
         // 1) нужны ли параметры? 
         // 2) входим только в void_main и оттуда будет вызываться всё остальное  или идём по все функциям в списке
         // 3) нужны ли id задачам или вместо id - уникальные имена
-        // 4) на самом деле состояний у задачи может быть в 2 раза больше 
+        // 4) на самом деле состояний у задачи может быть в 2 раза больше
+        // Use this function like first greeting to agent and if he answered, then put him new tasks 
         "void_main": 
         {
-			//this is always the first fuction called
+            //this is always the first fuction called
+            //? OPTIONAL: you can set template or it will be default.
+            template:{
+                timeout: 15000, //? time how long to wait for any response from the agent
+                blocking: false, //? blocking task makes other tasks wait to be completed
+                aging: 300000, //? after this time task will removed from tasklist 
+            },
+            //? 1) data for agents
+            raw: {test: 5, greeting: 'hello'},
+            //? 2) who is assigned the task
+            to_whom: 'all controllers', // 'all launchers', 'all'
+            //? what if error answer
             "if_err": 
             {
+                // means that agent have a problems
 				"call_":"sample_err_1"
-			},
+            },
+            //? what if timeout answer
             "if_timeout":			
             {
+                // means that agent not available
 				"call_":"sample_timeout_1"
-			},
+            },
+            //? what if normal answer (it doesn't matter if it's good or bad, but there are no errors)
             "if_answer": 
             [
-				{
+                {
+					"validate":"is_true",
+                    "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
+					"if_false": ""
+				},
+                {
 					"validate":"is_zero",
                     "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
 					"if_false": ""
@@ -78,15 +102,89 @@
         }
     }
     
-    //--------------------------------------------
-    function start_jobs() {
-        //task_board(JOBS.void_main);
-    }
+    //------------Jobs Validation Functions------------
+    const JVF = 
+    {
+        is_true: function(){
 
-    //------------JFX------------
-    const JFX = {
+        }, 
+        is_zero: function(){
 
+        }, 
+        is_one: function(){
+
+        }, 
+     }
+    //------------Jobs Functions------------
+    const JF = 
+    {
+        //? this funtion will be called from
+        init: function(){
+            //? automatically create templates based on function info
+            for (let job in JOBS) {
+                //? objects like 'void_main', 'proc', but not 'gcounter', which is number
+                if (typeof job == 'object') 
+                {
+                    if(TEMPLATES[job]) {
+                        //? Значит в текущих шаблонах уже есть шаблон с таким именем
+                        console.log("template name for '"+job+"' already occupied. You must change the function name");
+                        continue;
+                    } else { TEMPLATES[job] = {}; }
+                    //------to use the data
+                    if (JOBS.job.template) {
+                        TEMPLATES[job].timeout = JOBS.job.template.timeout || TEMPLATES.default.timeout;
+                        TEMPLATES[job].blocking = JOBS.job.template.blocking;
+                        if (typeof TEMPLATES[job].blocking == 'undefined') TEMPLATES[job].blocking = TEMPLATES.default.blocking; 
+                        TEMPLATES[job].aging = JOBS.job.template.aging || TEMPLATES.default.aging;
+                    }
+                    //--------if erorr--------
+                    if (JOBS.job.if_err) {
+                        if (JOBS.job.if_err.call_) {
+                            TEMPLATES[job].error_f = JOBS.job.if_err.call_;                                       
+                        }
+                    } else {TEMPLATES[job].error_f = TEMPLATES.default.error_f}
+                    //-------if timeout--------
+                    if (JOBS.job.if_timeout) {
+                        if (JOBS.job.if_timeout.call_) {
+                            TEMPLATES[job].timeout_f = JOBS.job.if_timeout.call_;            
+                        }
+                    } else {TEMPLATES[job].timeout_f = TEMPLATES.default.timeout_f}
+                    //-------if good answer-------------
+                    if (JOBS.job.if_answer) {
+                        TEMPLATES[job].complete_f = "complete__"+job;
+                    }
+                    //? Пока что не нахожу ей применения, поэтому дефолт
+                    TEMPLATES[job].start_f = TEMPLATES.default.start_f;
+                }
+            }
+        },
     }
+    //------------Jobs Start Functions------------
+    const JSF = {
+        void_main: function() {
+            let raw = {params: JOBS.void_main.raw, job_id: ++JOBS.gcounter};
+            MGS.task_board({t_names: ['void_main'], raws:[raw], stage: MGS.FRESH, sid: JOBS.void_main.to_whom});
+        },
+    };
+    //------------Jobs Complete Functions------------
+    const JCF = {
+        void_main: function(result) {
+            //TODO check validation Functions described in JOBS
+        },
+    };
+    //------------Jobs Error Functions------------
+    const JEF = {
+        sample_err_1: function(){
+
+        }
+     }
+    //------------Jobs Timeout Functions------------
+    const JTF = {
+        sample_timeout_1: function(){
+
+        }
+     }
+     
 
     //--------CONTROLLER HOUSEKEEPING----------
     const CHK = {
@@ -123,7 +221,8 @@
                 //}
             }
         };
-        this.finalizer = function(task, ag_sid){
+        this.finalizer = function(task, ag_sid)
+        {
             console.log("FINALIZER");
             if (task[MGS.TNAME] == 'exec_cmd') {
                 console.log("____EXEC CMD:", task[MGS.ANSWER]);
@@ -298,6 +397,15 @@
             timeout_f:  "timeout__default",
             error_f:    "error__default",
         },
+        /* такой шаблон создаётся автоматически из функции JF.init()
+        void_main:{
+            timeout: 15000, blocking: false, aging: 300000,
+            start_f:    "start__default",
+            complete_f: "complete__void_main", //own
+            timeout_f:  JOBS.job.if_timeout.call_, // string like 'sample_timeout_1'
+            error_f:    JOBS.job.if_err.call_, // string like 'sample_error_1'
+        }
+        */
         manifest: {
             timeout: 15000, blocking: false, aging: 300000,
             start_f:    "start__manifest",
@@ -355,8 +463,10 @@
             error_f:    "error__default",
         },
     };
+    //? Изначально Runner всё кидает сюда
     const TFX = new function TaskFunctions() 
     {
+        //------------------------------------
         this.start__default = function(task, ag_sid) {
             //* 2) change STAGE to SENT
             task[MGS.STAGE] = MGS.SENT;
@@ -746,7 +856,8 @@ const MGS = {
                     let tasks_loop_break = false;
                     let timelast = null;
 
-                    switch (tlist[t][MGS.STAGE]) {
+                    switch (tlist[t][MGS.STAGE]) 
+                    {
                         case MGS.FRESH:
                             //console.log("runner: TIMETOSTART=", tlist[t][MGS.TIMETOSTART]);
                             //console.log("runner: TIME NOW=", new Date().getTime());
@@ -759,7 +870,14 @@ const MGS = {
                                 //* 1) call task's start_f to make all necessary actions
                                 //console.log("TEMPLATES=",JSON.stringify(TEMPLATES));
                                 //console.log("tlist[t][MGS.TMPL]=", tlist[t][MGS.TMPL]);
-                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                //?-------------------------------------------
+                                //? From here we can pipe to JSF Functions or to TFX
+                                //?-------------------------------------------
+                                if (JOBS[tlist[t][MGS.TNAME]]) {
+                                    JSF[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                } else {
+                                    TFX[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                }
                                 //* 2) if task has 'blocking' type - then exit Tasklist
                                 if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                                 break;
@@ -771,42 +889,73 @@ const MGS = {
                             timelast = new Date().getTime() - tlist[t][MGS.TIMESENT];
                             //* 2) Compare CUR_TIME with TIMEPUSH
                             if (timelast > TEMPLATES[tlist[t][MGS.TMPL]].timeout) {
-                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                //?-------------------------------------------
+                                //? From here we can pipe to JTF Functions or to TFX
+                                //?-------------------------------------------
+                                if (JOBS[tlist[t][MGS.TNAME]]) {
+                                    JTF[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                } else {
+                                    TFX[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                }
                             }
                             //* 3) if (TIMEOUT) => TMPL.timeout_f()
                             //*    else exit Tasklist
                             if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             //else { console.log("runner: case SENT: non-blocking task!"); }
                             break;
+                        
                         case MGS.GOT:
                             //? 1) change STAGE to EXTRA
                             tlist[t][MGS.STAGE] = MGS.EXTRA;
                             tlist[t][MGS.TIMEEXTRA] = new Date().getTime();
                             //? 2) exec TMPL.complete_f()
-                            TFX[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            //?-------------------------------------------
+                            //? From here we can pipe to JOBS Functions or to TFX
+                            //?-------------------------------------------
+                            if (JOBS[tlist[t][MGS.TNAME]]) {
+                                JCF[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            } else {
+                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            }
                             //? 3) exit Tasklist
                             if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             break;
+                        
                         case MGS.EXTRA:
                             //* TODO: need to make a timeout decision !
                             //* 1) get TIMEOUT from TMPL
                             timelast = new Date().getTime() - tlist[t][MGS.TIMEEXTRA];
                             //* 2) Compare CUR_TIME with TIMEEXTRA
                             if (timelast > TEMPLATES[tlist[t][MGS.TMPL]].timeout) {
-                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                //?-------------------------------------------
+                                //? From here we can pipe to JTF Functions or to TFX
+                                //?-------------------------------------------
+                                if (JOBS[tlist[t][MGS.TNAME]]) {
+                                    JTF[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                } else {
+                                    TFX[TEMPLATES[tlist[t][MGS.TMPL]].timeout_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                }
                             }
                             //* 3) if (TIMEOUT) => TMPL.error_f()
                             //*    else exit Tasklist
                             if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             //else { console.log("runner: case EXTRA: non-blocking task!"); }
                             break;
+                        
                         case MGS.DONE:
                         case MGS.T_OUT:
                             //* 1) Do Nothing. it will Go to the Next Task
                             break;
                         case MGS.ERR:
                             //* TODO: maybe repeat task or chain of tasks ???
-                            TFX[TEMPLATES[tlist[t][MGS.TMPL]].error_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            //?-------------------------------------------
+                            //? From here we can pipe to JEF Functions or to TFX
+                            //?-------------------------------------------
+                            if (JOBS[tlist[t][MGS.TNAME]]) {
+                                JEF[TEMPLATES[tlist[t][MGS.TMPL]].error_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            } else {
+                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].error_f](tlist[t], MGS.agents[i][MGS.SID]);
+                            }
                             if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
                             break;
                         case MGS.BLOCKED:
@@ -847,8 +996,19 @@ const MGS = {
 
 
         //? arg.sid == "all" - for example new Manifest to all Agents
-        if(arg.sid == "all") {
+        if( (typeof arg.sid == 'string')&&(arg.sid.startsWith('all')) ) 
+        {
+            let is_only_controllers = arg.sid == 'all controllers';
+            let is_only_launchers = arg.sid == 'all launchers';
             for (let a in MGS.agents) {
+                if ( (is_only_controllers)&&(!(MGS.agents[a][MGS.TYPE]=='controller')) ) {
+                    console.log("is not controller");
+                    continue;
+                }
+                if ( (is_only_launchers)&&(!(MGS.agents[a][MGS.TYPE]=='launcher')) ) {
+                    console.log("is not launcher");
+                    continue;
+                }
                 for (let tn in arg.t_names) {
                     let one_task = [];
                     one_task[MGS.TID] = ++MGS.gcounter;
@@ -876,6 +1036,9 @@ const MGS = {
                     MGS.agents[a][MGS.TASKS].push(one_task);
                 }
             }
+        }
+        else if(arg.sid == "all controllers") {
+
         }
         else {
             if (arg.stage == MGS.FRESH) {
