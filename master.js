@@ -3,6 +3,7 @@
     const util = require('util');
     const path = require('path');
     const fs = require('fs');
+    const EventEmitter = require('events');
     const SETT	= read_settings(path.normalize("./m_settings.json"));
     const UPDATE_FOLD = SETT.update_folder;
 
@@ -16,18 +17,16 @@
     const io = require('socket.io')(SETT.port); 
 
     //--------Your Fortran-------
-    const JOBS =  {
-        gcounter: 0,
-        
+    const JOBS =  {       
         //this is the name of job to send to Agent
         // 1) нужны ли параметры? 
         // 2) входим только в void_main и оттуда будет вызываться всё остальное  или идём по все функциям в списке
         // 3) нужны ли id задачам или вместо id - уникальные имена
         // 4) на самом деле состояний у задачи может быть в 2 раза больше
         // Use this function like first greeting to agent and if he answered, then put him new tasks 
-        "void_main": 
-        {
-            //this is always the first fuction called
+        //this is always the first fuction called
+        void_main: 
+        { 
             //? OPTIONAL: you can set template or it will be default.
             template:{
                 timeout: 15000, //? time how long to wait for any response from the agent
@@ -35,27 +34,19 @@
                 aging: 300000, //? after this time task will removed from tasklist 
             },
             //? 1) data for agents
-            raw: {test: 5, greeting: 'hello'},
+            parameters: {test: 5, greeting: 'hello'},
             //? 2) who is assigned the task
             to_whom: 'all controllers', // 'all launchers', 'all'
             //? what if error answer
-            "if_err": 
-            {
-                // means that agent have a problems
-				"call_":"sample_err_1"
-            },
+            "if_err": { "call_":"sample_err_1" },
             //? what if timeout answer
-            "if_timeout":			
-            {
-                // means that agent not available
-				"call_":"sample_timeout_1"
-            },
+            "if_timeout": { "call_":"sample_timeout_1" },
             //? what if normal answer (it doesn't matter if it's good or bad, but there are no errors)
             "if_answer": 
             [
-                {
+                { //? means controller ready to receive other JOBS
 					"validate":"is_true",
-                    "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
+                    "if_true": [ 30000, "disk", 10000, "sample_fuction_zero_is_true", "return_" ],
 					"if_false": ""
 				},
                 {
@@ -73,16 +64,11 @@
                 }
             ]
         },
-        "sample_fuction_02":
+        diskspace:
         {
-            "if_err": 
-            {
-				"call_":"sample_err_1"
-			},
-            "if_timeout":			
-            {
-				"call_":"sample_timeout_1"
-			},
+            parameters: {vol: "C:"},
+            "if_err": { "call_":"sample_err_1" },
+            "if_timeout": { "call_":"sample_timeout_1" },
             "if_answer": 
             [
 				{
@@ -116,74 +102,121 @@
         }, 
      }
     //------------Jobs Functions------------
-    const JF = 
+    const JF_ = 
     {
+        gcounter: 0,
+        emitter: null,
+        create_emitter: function(){
+            JF_.emitter = new EventEmitter();
+            JF_.emitter.on('controller_comes', sid=>{
+                // Main Function in JOBS Object
+                if (typeof sid != 'undefined') {
+                    MGS.task_board({t_names:['void_main'], stage: MGS.FRESH, sid: sid});
+                } else { console.log("on 'controller_comes' event was not passed socket ID !"); }
+            });
+        },
         //? this funtion will be called from
-        init: function(){
+        init_: function(){
+            this.create_emitter();
+            this.init_templates();
             //? automatically create templates based on function info
+        },
+        //? if not determined functions in JCF and JSF, then default Templates is applied
+        init_templates: function()
+        {
             for (let job in JOBS) {
+                console.log("job =",job, "typeof JOBS[job] =",typeof JOBS[job]);
                 //? objects like 'void_main', 'proc', but not 'gcounter', which is number
-                if (typeof job == 'object') 
+                if (typeof JOBS[job] == 'object') 
                 {
                     if(TEMPLATES[job]) {
                         //? Значит в текущих шаблонах уже есть шаблон с таким именем
-                        console.log("template name for '"+job+"' already occupied. You must change the function name");
+                        console.log("!!! template name '"+job+"' already occupied. You must change the name !!!");
                         continue;
                     } else { TEMPLATES[job] = {}; }
                     //------to use the data
-                    if (JOBS.job.template) {
-                        TEMPLATES[job].timeout = JOBS.job.template.timeout || TEMPLATES.default.timeout;
-                        TEMPLATES[job].blocking = JOBS.job.template.blocking;
+                    if (JOBS[job].template) {
+                        TEMPLATES[job].timeout = JOBS[job].template.timeout || TEMPLATES.default.timeout;
+                        TEMPLATES[job].blocking = JOBS[job].template.blocking;
                         if (typeof TEMPLATES[job].blocking == 'undefined') TEMPLATES[job].blocking = TEMPLATES.default.blocking; 
-                        TEMPLATES[job].aging = JOBS.job.template.aging || TEMPLATES.default.aging;
+                        TEMPLATES[job].aging = JOBS[job].template.aging || TEMPLATES.default.aging;
+                    } else {
+                        TEMPLATES[job].timeout = TEMPLATES.default.timeout;
+                        TEMPLATES[job].blocking = TEMPLATES.default.blocking;
+                        TEMPLATES[job].aging = TEMPLATES.default.aging;
                     }
                     //--------if erorr--------
-                    if (JOBS.job.if_err) {
-                        if (JOBS.job.if_err.call_) {
-                            TEMPLATES[job].error_f = JOBS.job.if_err.call_;                                       
+                    if (JOBS[job].if_err) {
+                        if (JOBS[job].if_err.call_) {
+                            TEMPLATES[job].error_f = JOBS[job].if_err.call_;                                       
                         }
                     } else {TEMPLATES[job].error_f = TEMPLATES.default.error_f}
                     //-------if timeout--------
-                    if (JOBS.job.if_timeout) {
-                        if (JOBS.job.if_timeout.call_) {
-                            TEMPLATES[job].timeout_f = JOBS.job.if_timeout.call_;            
+                    if (JOBS[job].if_timeout) {
+                        if (JOBS[job].if_timeout.call_) {
+                            TEMPLATES[job].timeout_f = JOBS[job].if_timeout.call_;            
                         }
                     } else {TEMPLATES[job].timeout_f = TEMPLATES.default.timeout_f}
                     //-------if good answer-------------
-                    if (JOBS.job.if_answer) {
-                        TEMPLATES[job].complete_f = "complete__"+job;
-                    }
-                    //? Пока что не нахожу ей применения, поэтому дефолт
-                    TEMPLATES[job].start_f = TEMPLATES.default.start_f;
-                }
+                    if (JCF[job]){ TEMPLATES[job].complete_f = job; } 
+                    else { TEMPLATES[job].complete_f = TEMPLATES.default.complete_f; }
+
+                    if (JSF[job]){ TEMPLATES[job].start_f = job; } 
+                    else { TEMPLATES[job].start_f = TEMPLATES.default.start_f; }
+
+                    console.log("TEMPLATES["+job+"]=", JSON.stringify(TEMPLATES[job]));
+                } 
             }
         },
     }
     //------------Jobs Start Functions------------
     const JSF = {
-        void_main: function() {
-            let raw = {params: JOBS.void_main.raw, job_id: ++JOBS.gcounter};
-            MGS.task_board({t_names: ['void_main'], raws:[raw], stage: MGS.FRESH, sid: JOBS.void_main.to_whom});
+        start__default: function(task, ag_sid) {
+            console.log("JSF.start__default(): task name =", task[MGS.TNAME]);
+            task[MGS.STAGE] = MGS.SENT;
+            let payload = {c2_param: 'start default function', c2_jid: ++JF_.gcounter};
+            let parcel = { tid: task[MGS.TID], payload: payload };
+            io.to(ag_sid).emit(task[MGS.TNAME], parcel);
         },
     };
     //------------Jobs Complete Functions------------
     const JCF = {
-        void_main: function(result) {
+        complete__default: function(task, ag_sid) {
+            task[MGS.STAGE] = MGS.DONE;
+            console.log("JCF.complete__default(): task name =", task[MGS.TNAME]);
             //TODO check validation Functions described in JOBS
         },
-    };
-    //------------Jobs Error Functions------------
-    const JEF = {
-        sample_err_1: function(){
+        void_main: function(task, ag_sid) {
+            console.log("JCF.void_main():", task[MGS.TNAME]);
+            //TODO check validation Functions described in JOBS
+            //-------------------------------------------------
+            
 
-        }
-     }
+            task[MGS.STAGE] = MGS.DONE;
+        },
+    };
     //------------Jobs Timeout Functions------------
     const JTF = {
-        sample_timeout_1: function(){
-
+        timeout__default: function(task, ag_sid) {
+            task[MGS.STAGE] = MGS.T_OUT;
+            console.log("JTF.timeout__default(): task name =", task[MGS.TNAME]);
+        },
+        sample_timeout_1: function(task, ag_sid){
+            task[MGS.STAGE] = MGS.T_OUT;
+            console.log("JTF.sample_timeout_1(): task =", JSON.stringify(task));
         }
      }
+    //------------Jobs Error Functions------------
+    const JEF = {
+        error__default: function(task, ag_sid) {
+            task[MGS.STAGE] = MGS.ERR;
+            console.log("JTF.error__default(): task name =", task[MGS.TNAME]);
+        },
+        sample_err_1: function(task, ag_sid){
+            console.log("JEF.sample_err_1(): task =", JSON.stringify(task));
+            task[MGS.STAGE] = MGS.ERR;
+        }
+    }
      
 
     //--------CONTROLLER HOUSEKEEPING----------
@@ -193,7 +226,7 @@
         CHECK_VAL:0, RES_VAL:1, LOGIC_OP:2, TRUE_FU:3, FALSE_FU:4, 
         OUT_TIME:6, TRY_AGN_TIME:7, ADD_PARAM:8,
         LIST: [
-            [1, "proc", "auto", 0, "ass.exe", [[1, null, "int_lte", "tfunc1", "ffunc1"], [1, null, "int_gte", "tfunc1_2", "ffunc1_2"], [1, null, "int_is_equal", "tfunc1_2", "ffunc1_2"]], 15000, 30000, 0]
+            //[1, "proc", "auto", 0, "ass.exe", [[1, null, "int_lte", "tfunc1", "ffunc1"], [1, null, "int_gte", "tfunc1_2", "ffunc1_2"], [1, null, "int_is_equal", "tfunc1_2", "ffunc1_2"]], 15000, 60000, 0]
             //[2, "disk", "auto", 0, "C:", [[26232171968, null, "int_lte", "low_disk_space_true", "big_disk_space"]], 20000, 60000, 0],
             //[3, "exec_cmd", "manual", 0, "calc", [[12.0, null, "compare_versions", "exec_cmd_ok", "exec_cmd_fail"]], 20000, 0, 0],
             //[4, "nvidia_smi", "manual", 0, "all info", [[1, null, "int_lte", "gpu_absent", "gpu_more_than_1"]], 60000, 0, 0]
@@ -397,13 +430,13 @@
             timeout_f:  "timeout__default",
             error_f:    "error__default",
         },
-        /* такой шаблон создаётся автоматически из функции JF.init()
+        /* такой шаблон создаётся автоматически из функции JF_.init_templates()
         void_main:{
             timeout: 15000, blocking: false, aging: 300000,
             start_f:    "start__default",
             complete_f: "complete__void_main", //own
-            timeout_f:  JOBS.job.if_timeout.call_, // string like 'sample_timeout_1'
-            error_f:    JOBS.job.if_err.call_, // string like 'sample_error_1'
+            timeout_f:  JOBS[job].if_timeout.call_, // string like 'sample_timeout_1'
+            error_f:    JOBS[job].if_err.call_, // string like 'sample_error_1'
         }
         */
         manifest: {
@@ -497,7 +530,7 @@
         };
         this.start__manifest = function(task, ag_sid) {
             let stringified_manifest = JSON.stringify(MGS.manifest.self);
-            console.log("sending manifest to agent:", stringified_manifest);
+            //console.log("sending manifest to agent:", stringified_manifest);
             task[MGS.STAGE] = MGS.SENT;
             //let parcel = { tid: task[MGS.TID], payload: stringified_manifest };
             let parcel = { tid: task[MGS.TID], payload: MGS.manifest.self };
@@ -571,7 +604,7 @@
                             else {  t_names = ['start_agent']; console.log('---16'); }
                         }
                         if(!Array.isArray(t_names)) t_names = [];
-                        t_names.push('housekeeping');
+                        t_names.push('housekeeping');                        
                     }
                     //----TYPE launcher--------
                     else if (MGS.agents[agent_index][MGS.TYPE] == "launcher") {
@@ -682,6 +715,7 @@ const MGS = {
     TID:0, TNAME:1, STAGE:2, RAW:3, ANSWER:4, NEXT_TID:5, TMPL:6, TIMEPUSH:7, TIMESENT:8, TIMEEXTRA:9, TIMETOSTART:10, BUNDLE: 11, AGING: 12,
     FRESH:0, SENT:1, GOT:2, DONE:3, EXTRA:4, ERR:5, BLOCKED:6, T_OUT:7, //STAGES !
     main: function(){
+        JF_.init_();
         // at the beginning request dir manifest and send to agents
         get_dir_manifest(UPDATE_FOLD).then(res => {
             console.log("got update manifest:", res);
@@ -730,6 +764,11 @@ const MGS = {
                         if (data.payload) {
                             MGS.subscribe_agent(client, data.payload);
                             MGS.task_board({ t_names: ["manifest"], stage: MGS.FRESH, sid: client.id, bundle: "same_md5_agents" });
+                            // here we allow our stream of JOBS
+                            if (data.payload[MGS.TYPE] == 'controller'){
+                                console.log("controller connected! pass to JOBS 'void_main'!");
+                                JF_.emitter.emit('controller_comes', client.id);
+                            }
                         }
                         else { console.log("ERR: Agent's identifiers are empty! Can't subscribe agent !"); }
                     } 
@@ -756,7 +795,13 @@ const MGS = {
                     console.log("incoming 'report' event without data!");
                     break;
                 default:
-                    console.log("UNKNOWN IO REPORT !");
+                    console.log("UNREGISTERED IO REPORT !");
+                    if (data.done) {
+                        MGS.task_board( {tid: data.tid, answer: data.answer, stage: MGS.GOT, sid: client.id }, "socket:"+data.title );
+                    } else {
+                        console.log("Agent don't solve the task: ", data.cause);
+                    }
+                    break;
             }
         });
         
@@ -865,7 +910,7 @@ const MGS = {
                                 tlist[t][MGS.TIMETOSTART] = new Date().getTime(); 
                             }
                             if(tlist[t][MGS.TIMETOSTART] <= new Date().getTime()) {
-                                tlist[t][MGS.STAGE] = MGS.SENT;
+                                //tlist[t][MGS.STAGE] = MGS.SENT;
                                 tlist[t][MGS.TIMESENT] = new Date().getTime();
                                 //* 1) call task's start_f to make all necessary actions
                                 //console.log("TEMPLATES=",JSON.stringify(TEMPLATES));
@@ -874,6 +919,7 @@ const MGS = {
                                 //? From here we can pipe to JSF Functions or to TFX
                                 //?-------------------------------------------
                                 if (JOBS[tlist[t][MGS.TNAME]]) {
+                                    //console.log("calling JSF["+TEMPLATES[tlist[t][MGS.TMPL]].start_f+"] function!");
                                     JSF[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
                                 } else {
                                     TFX[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
@@ -913,6 +959,7 @@ const MGS = {
                             //? From here we can pipe to JOBS Functions or to TFX
                             //?-------------------------------------------
                             if (JOBS[tlist[t][MGS.TNAME]]) {
+                                //console.log("___complete function name: ", TEMPLATES[tlist[t][MGS.TMPL]].complete_f)
                                 JCF[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
                             } else {
                                 TFX[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
@@ -975,12 +1022,15 @@ const MGS = {
                     if (tasks_loop_break) break;
                 }
                 for (let t in tlist) {
-                    //Delete Task if its AGE has Expired
-                    let now = new Date().getTime();
-                    if ( (tlist[t][MGS.TIMEPUSH] + tlist[t][MGS.AGING]) < now ) {
-                        console.log("delete Aging task! length before=", tlist.length);
-                        tlist.shift(t);
-                        console.log("delete Aging task! length after=", tlist.length);
+                    //? if task Done and Aging is over - than Delete task
+                    if (tlist[t][MGS.STAGE] == 'DONE') {
+                        //Delete Task if its AGE has Expired
+                        let now = new Date().getTime();
+                        if ( (tlist[t][MGS.TIMEPUSH] + tlist[t][MGS.AGING]) < now ) {
+                            console.log("delete Aging task! length before=", tlist.length);
+                            tlist.shift(t);
+                            console.log("delete Aging task! length after=", tlist.length);
+                        }
                     }
                 }
             }
@@ -988,6 +1038,7 @@ const MGS = {
     },
     task_board: function(arg_, caller) {
         console.log("task_board(): who call me:", caller)
+        console.log("arg_ =", JSON.stringify(arg_))
         //* arg = { t_names:Array, raws:Array, stage:Number, sid:String, template:Object }
         //* 'stage' can be: "new", "gone", "done", maybe also "err"
         let arg = (arg_)?(arg_):{};
@@ -998,14 +1049,12 @@ const MGS = {
         //? arg.sid == "all" - for example new Manifest to all Agents
         if( (typeof arg.sid == 'string')&&(arg.sid.startsWith('all')) ) 
         {
-            let is_only_controllers = arg.sid == 'all controllers';
-            let is_only_launchers = arg.sid == 'all launchers';
             for (let a in MGS.agents) {
-                if ( (is_only_controllers)&&(!(MGS.agents[a][MGS.TYPE]=='controller')) ) {
+                if ( (arg.sid == 'all controllers')&&((MGS.agents[a][MGS.TYPE]!='controller')) ) {
                     console.log("is not controller");
                     continue;
                 }
-                if ( (is_only_launchers)&&(!(MGS.agents[a][MGS.TYPE]=='launcher')) ) {
+                if ( (arg.sid == 'all launchers')&&((MGS.agents[a][MGS.TYPE]!='launcher')) ) {
                     console.log("is not launcher");
                     continue;
                 }
@@ -1036,9 +1085,6 @@ const MGS = {
                     MGS.agents[a][MGS.TASKS].push(one_task);
                 }
             }
-        }
-        else if(arg.sid == "all controllers") {
-
         }
         else {
             if (arg.stage == MGS.FRESH) {
@@ -1099,20 +1145,21 @@ const MGS = {
                 //? Find Task in Tasklist and change STAGE
                 if (arg.tid) {
                     let task = MGS.find_task_by_tid_and_sid({tid: arg.tid, sid: arg.sid});
-                    if (typeof task != 'undefined') 
-                        console.log("task_board(): stage GOT: task=", task[MGS.TNAME]);
-                    else console.log("task_board(): stage GOT: probably, this task was deleted...");
-                    
+                    if (typeof task == 'undefined') {
+                        console.log("task_board(): stage GOT: probably, this task was deleted...");
+                        return;
+                    }                    
                     if (Array.isArray(task)){ 
                         task[MGS.STAGE] = arg.stage; 
                         if (typeof arg.answer != 'undefined') { task[MGS.ANSWER] = arg.answer;  }
                     }
                     else { console.log("ERR: task_board(): task type is Not an Array or task was deleted!"); }
                 } 
-                else { console.log("ERR: task_board(): STAGE 'GOT': No TID !"); }
+                else { console.log("ERR: task_board(): STAGE 'GOT': No TID or JID !"); }
             }
             else { console.log("ERR: task_board(): unexpected STAGE !"); }
         }
+
         function check_tnames_and_raws(arg){
             //console.log("checking params: t_names=", arg.t_names);
             let checks = {};
@@ -1205,7 +1252,7 @@ const MGS = {
         },
     },
     subscribe_agent: function(client, identifiers){
-        console.log("subscribe_agent():", client.id);
+        //console.log("subscribe_agent():", client.id);
         if (identifiers){
             identifiers[MGS.SID] = client.id;
             identifiers[MGS.IP] = client.handshake.address;
@@ -1332,7 +1379,7 @@ const MGS = {
         let task;
         if ((obj.sid)&&(obj.tid)) {
             let agent_index = MGS.find_agent_index_by_sid(obj.sid);
-            if (agent_index) {
+            if (typeof agent_index != 'undefined') {
                 let tlist = MGS.agents[agent_index][MGS.TASKS];
                 if (Array.isArray(tlist)) {
                     for (let t in tlist) {
@@ -1343,6 +1390,7 @@ const MGS = {
                     }    
                 }
             }
+            else { console.log("ERR: find_task_by_tid_and_sid(): Can't find Agent in Agents list"); }
         } else { console.log("ERR: find_task_by_tid_and_sid(): No params 'sid' or 'tid'"); }
         return task;
     },

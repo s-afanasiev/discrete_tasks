@@ -55,7 +55,8 @@ const GS = {
     },
     TYPE: 0, SID: 1, MD5: 2, IP: 3, PID: 4, PPID: 5, STATE: 6, TASKS: 7,
     EVS:{CONNECT: 'connect', HOUSEKEEP: 'housekeeping', DISK: 'disk', PROC: 'proc', 
-         EXEC_CMD: 'exec_cmd', NVSMI: 'nvidia_smi', WETRANSFER: 'wetransfer'},
+         EXEC_CMD: 'exec_cmd', NVSMI: 'nvidia_smi', WETRANSFER: 'wetransfer',
+        VOIDMAIN: 'void_main'},
     socket_io_init: function() {
         //* 'connect' and 'disconnect' practically not used
         socket.on('connect', function(){
@@ -261,6 +262,17 @@ const GS = {
                         GS.io_to_master(parcel);
                     }).catch(ex=>{console.log("EX=",ex)});
                 }
+            }
+        });
+        socket.on(GS.EVS.VOIDMAIN, function(data){
+            if(data && data.payload) {
+                let params = data.payload.c2_param;
+                let job_id = data.payload.c2_jid;
+                let task_id = data.tid;
+                console.log(GS.EVS.VOIDMAIN, "event, params:", params, task_id, job_id);
+                setTimeout(()=>{
+                    GS.io_to_master({kind: "report", done: true, title: GS.EVS.VOIDMAIN, answer: true, tid: task_id, jid: job_id});
+                }, 20000);
             }
         });
     },
