@@ -270,9 +270,9 @@ const GS = {
                 let job_id = data.payload.c2_jid;
                 let task_id = data.tid;
                 console.log(GS.EVS.VOIDMAIN, "event, params:", params, task_id, job_id);
-                setTimeout(()=>{
-                    GS.io_to_master({kind: "report", done: true, title: GS.EVS.VOIDMAIN, answer: true, tid: task_id, jid: job_id});
-                }, 20000);
+                //setTimeout(()=>{
+                GS.io_to_master({kind: "report", done: true, title: GS.EVS.VOIDMAIN, answer: true, tid: task_id, jid: job_id});
+                //}, 20000);
             }
         });
     },

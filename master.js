@@ -16,7 +16,9 @@
     //const io = require('socket.io')(server)
     const io = require('socket.io')(SETT.port); 
 
+    //---------------------------
     //--------Your Fortran-------
+    //---------------------------
     const JOBS =  {       
         //this is the name of job to send to Agent
         // 1) нужны ли параметры? 
@@ -91,8 +93,9 @@
     //------------Jobs Validation Functions------------
     const JVF = 
     {
-        is_true: function(){
-
+        is_true: function(par){
+            if (par == true) return true;
+            else return false;
         }, 
         is_zero: function(){
 
@@ -100,7 +103,7 @@
         is_one: function(){
 
         }, 
-     }
+    }
     //------------Jobs Functions------------
     const JF_ = 
     {
@@ -111,7 +114,7 @@
             JF_.emitter.on('controller_comes', sid=>{
                 // Main Function in JOBS Object
                 if (typeof sid != 'undefined') {
-                    MGS.task_board({t_names:['void_main'], stage: MGS.FRESH, sid: sid});
+                    MGS.task_board({t_names:['void_main'], stage: MGS.FRESH, sid: sid, who_call:"JF_.emitter"});
                 } else { console.log("on 'controller_comes' event was not passed socket ID !"); }
             });
         },
@@ -168,6 +171,87 @@
                 } 
             }
         },
+        handle_conditions: function(task, ag_sid)
+        {
+            let conditions = JOBS.void_main.if_answer;
+            if ((!Array.isArray(conditions))||(conditions.length==0)) {
+                return;
+            }
+            console.log("--------conditions length =", conditions.length);
+            let answer = task[MGS.ANSWER];
+            let pending = conditions.length;
+            this.handle_one_condition(conditions, answer, pending);
+        },
+        handle_one_condition: function(conditions, answer, pending, counter)
+        {
+            if (typeof counter == 'undefined') counter = 0;
+            //console.log("one condition =", JSON.stringify(conditions[counter]));
+            //one condition = {"validate":"is_true","if_true":[30000,"disk",10000,"sample_fuction_zero_is_true","return_"],"if_false":""}
+            let cond = conditions[counter];
+            console.log("-------cond=", cond);
+            
+            //?======expected key 'validate', which may be several=========
+            //=============================================================
+            if (cond.validate) 
+            {
+                //? calling validation function, e.g. "is_true"
+                let is_validate_true;
+                if (typeof JVF[cond.validate] == 'function') {
+                    is_validate_true = JVF[cond.validate](answer);
+                }
+                console.log("is_validate_true =", is_validate_true);
+                //---------checking 'if_true' key: is exist, is Array, is length > 0
+                let is_prop_true_checked = false;
+                if( (cond.if_true) && (Array.isArray(cond.if_true)) && (cond.if_true.length>0) )
+                    is_prop_true_checked = true;
+                //---------checking 'if_false' key: is exist, is Array, is length > 0
+                let is_prop_false_checked = false;
+                if( (cond.if_false) && (Array.isArray(cond.if_false)) && (cond.if_false.length>0) )
+                    is_prop_false_checked = true;
+                //--------------------------
+                if (is_validate_true && is_prop_true_checked) {
+                    this.after_validate_actions(cond.if_true).then(res=>{
+                        //"if_true":[30000,"disk",10000,"sample_fuction_zero_is_true","return_"]
+                        console.log("after_validate_actions(truelist) -> result=", res);
+                        if (res.has_return) { return; }
+                    }).catch(ex=>{
+                        console.log("after_validate_actions(truelist) -> exception=", ex);
+                    });
+                } 
+                else if (!is_validate_true && is_prop_false_checked) {
+                    this.after_validate_actions(cond.if_false).then(res=>{
+                        console.log("after_validate_actions(falselist) -> result=", res);
+                        if (res.has_return) { return; }
+                    }).catch(ex=>{
+                        console.log("after_validate_actions(falselist) -> exception=", ex);
+                    });
+                }
+                //?---finish or continue recursion-----
+                if(!--pending) {return;}
+                else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+            }
+            //?========last check in a specific JOBS[taskname]===========
+            //===========================================================
+            else if (cond.novalidate) {
+
+                //?---finish or continue recursion-----
+                if(!--pending) {return;}
+                else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+            }
+            //=============================================================
+            //=============================================================
+            else { 
+                console.log("not regulated keys! must be 'validate' or 'novalidate'", Object.keys(conditions[counter])); 
+                //?---finish or continue recursion-----
+                if(!--pending) {return;}
+                else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+            }                
+        },
+        after_validate_actions: function(list){
+            return new Promise((resolve, reject)=>{
+                resolve({has_return: true});
+            });
+        },
     }
     //------------Jobs Start Functions------------
     const JSF = {
@@ -187,12 +271,14 @@
             //TODO check validation Functions described in JOBS
         },
         void_main: function(task, ag_sid) {
-            console.log("JCF.void_main():", task[MGS.TNAME]);
+            console.log("JCF.void_main(): task=", JSON.stringify(task));
             //TODO check validation Functions described in JOBS
             //-------------------------------------------------
             
-
+            JF_.handle_conditions(task, ag_sid);
+            console.log("JCF.void_main(): making stage task DONE");
             task[MGS.STAGE] = MGS.DONE;
+            //-------------------------------
         },
     };
     //------------Jobs Timeout Functions------------
@@ -219,7 +305,9 @@
     }
      
 
+    //-----------------------------------------
     //--------CONTROLLER HOUSEKEEPING----------
+    //-----------------------------------------
     const CHK = {
         description: "controller housekeeping",
         ID:0, TYPE:1, SVC_TYPE:2, SVC_TYPE_PARAM:3, PARAMETER:4, ORDERS:5,
@@ -250,7 +338,7 @@
                 let order = CHK.LIST[i];
                 //if(order[CHK.SVC_TYPE] == "auto") {   
                 let raw = {parameter: order[CHK.PARAMETER], chk_id: order[CHK.ID]};
-                MGS.task_board({t_names: [order[CHK.TYPE]], raws:[raw], stage: MGS.FRESH, sid: ag_sid});
+                MGS.task_board({t_names: [order[CHK.TYPE]], raws:[raw], stage: MGS.FRESH, sid: ag_sid, who_call:"CHK.LIST"});
                 //}
             }
         };
@@ -338,7 +426,7 @@
                     let timetostart_ = order[CHK.TRY_AGN_TIME] + new Date().getTime();
                     //console.log("timetostart_=",timetostart_);
                     let raw = {parameter: order[CHK.PARAMETER], chk_id: order[CHK.ID]};
-                    MGS.task_board({t_names: [order[CHK.TYPE]], raws:[raw], stage: MGS.FRESH, sid: ag_sid, timetostart: timetostart_});   
+                    MGS.task_board({t_names: [order[CHK.TYPE]], raws:[raw], stage: MGS.FRESH, sid: ag_sid, timetostart: timetostart_, who_call: "CHK_FX.finalizer"});   
                 }
             }
             else {"ERR: finalizer(): Unexpected type of agent answer !"}
@@ -421,7 +509,9 @@
     }
     //--------/CONTROLLER HOUSEKEEPING----------
 
-    //--------TASK TEMPLATES AND FUNCTIONS----------
+    //-----------------------------------------
+    //--------TASK TEMPLATES AND FUNCTIONS-----
+    //-----------------------------------------
     const TEMPLATES = {
         default: {
             timeout: 5000, blocking: true, aging: 300000,
@@ -556,7 +646,8 @@
                                 timetostart_: (5000 + new Date().getTime()),
                                 stage: MGS.FRESH, 
                                 sid: ag_sid,
-                                bundle: "manifest" } );
+                                bundle: "manifest",
+                                who_call: "TFX.complete__manifest" } );
             }
             task[MGS.STAGE] = MGS.DONE;
         };
@@ -586,20 +677,16 @@
                     if (MGS.agents[agent_index][MGS.TYPE] == "controller") 
                     {     
                         if (diff.is_diff) {
-                            console.log('---11');
-                            if (diff.is_touch_partner_folder) { 
-                                console.log('---12');  
+                            if (diff.is_touch_partner_folder) {  
                                 if(is_partner_exist) { t_names = ['kill_agent', 'sync_dirs', 'start_agent'];  }
                                 else {  t_names = ['sync_dirs', 'start_agent']; }
                             }
                             else {
-                                console.log('---13');
                                 if(is_partner_exist) { t_names = ['sync_dirs']; }
                                 else {  t_names = ['sync_dirs', 'start_agent']; }
                             }
                         } 
                         else {
-                            console.log('---14');
                             if(is_partner_exist) { console.log('---15'); }
                             else {  t_names = ['start_agent']; console.log('---16'); }
                         }
@@ -609,12 +696,10 @@
                     //----TYPE launcher--------
                     else if (MGS.agents[agent_index][MGS.TYPE] == "launcher") {
                         if (diff.is_diff) {
-                            console.log('---2');
                             if(is_partner_exist) { t_names = ['kill_agent', 'sync_dirs', 'start_agent']; }
                             else { t_names = ['sync_dirs', 'start_agent']; }
                         }
                         else {
-                            console.log('---3');
                             if(is_partner_exist) { }
                             else { t_names = ['start_agent']; }
                         }
@@ -631,18 +716,15 @@
                 //------------------------
 
                 if (typeof t_names != 'undefined') {
-                    console.log('---55');
-                    MGS.task_board( {t_names:t_names, stage: MGS.FRESH, sid: ag_sid } );
+                    MGS.task_board( {t_names:t_names, stage: MGS.FRESH, sid: ag_sid, who_call:"TFX.complete__same_md5_agents" } );
                 }
                 this.complete__default(task, ag_sid);
             }   
             else if ( task[MGS.BUNDLE] != 'manifest' ) 
             {
-                console.log('---9');
                 //? Means that this task 'same_md5_agents' was a standalone task
                 if(is_partner_exist == false) {
-                    console.log('---10');
-                    MGS.task_board( {t_names:['start_agent'], sid: ag_sid, stage: MGS.FRESH} );
+                    MGS.task_board( {t_names:['start_agent'], sid: ag_sid, stage: MGS.FRESH, who_call:"TFX.complete__same_md5_agents"} );
                 }
             }
             else { console.log("complete__same_md5_agents(): incredible!") }
@@ -664,7 +746,6 @@
             console.log("task name:", task[MGS.TNAME], ", agent sid:", ag_sid);
         };
     }
-
     //--------/TASK TEMPLATES AND FUNCTIONS----------
     
     //--------VISUALIZER FOR BROWSERS----------
@@ -763,7 +844,7 @@ const MGS = {
                         //? payload - this is agent identifiers. 
                         if (data.payload) {
                             MGS.subscribe_agent(client, data.payload);
-                            MGS.task_board({ t_names: ["manifest"], stage: MGS.FRESH, sid: client.id, bundle: "same_md5_agents" });
+                            MGS.task_board({ t_names: ["manifest"], stage: MGS.FRESH, sid: client.id, bundle: "same_md5_agents", who_call:"client report "+data.title });
                             // here we allow our stream of JOBS
                             if (data.payload[MGS.TYPE] == 'controller'){
                                 console.log("controller connected! pass to JOBS 'void_main'!");
@@ -786,7 +867,7 @@ const MGS = {
                 case "exec_cmd":
                 case "nvidia_smi":
                     if (data.done) {
-                        MGS.task_board( {tid: data.tid, answer: data.answer, stage: MGS.GOT, sid: client.id }, "socket:"+data.title );
+                        MGS.task_board( {tid: data.tid, answer: data.answer, stage: MGS.GOT, sid: client.id, who_call:"client report "+data.title } );
                     } else {
                         console.log("Agent don't solve the task: ", data.cause);
                     }
@@ -797,7 +878,7 @@ const MGS = {
                 default:
                     console.log("UNREGISTERED IO REPORT !");
                     if (data.done) {
-                        MGS.task_board( {tid: data.tid, answer: data.answer, stage: MGS.GOT, sid: client.id }, "socket:"+data.title );
+                        MGS.task_board( {tid: data.tid, answer: data.answer, stage: MGS.GOT, sid: client.id, who_call:"client report default"});
                     } else {
                         console.log("Agent don't solve the task: ", data.cause);
                     }
@@ -1036,8 +1117,8 @@ const MGS = {
             }
         }, speed);
     },
-    task_board: function(arg_, caller) {
-        console.log("task_board(): who call me:", caller)
+    task_board: function(arg_) {
+        console.log("task_board(): who call me:", arg_.who_call)
         console.log("arg_ =", JSON.stringify(arg_))
         //* arg = { t_names:Array, raws:Array, stage:Number, sid:String, template:Object }
         //* 'stage' can be: "new", "gone", "done", maybe also "err"
@@ -1187,7 +1268,7 @@ const MGS = {
                 if ((this.self)&&(this.self.length > 0)) {
                     for (let client in this.deaf_list) {
                         let id = this.deaf_list[client].id;
-                        MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: id, bundle: "same_md5_agents" });
+                        MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: id, bundle: "same_md5_agents", who_call:"MGS.manifest.notify_deaf" });
                         //this.deaf_list[client].emit('manifest', this.self);
                     }
                 }
@@ -1206,7 +1287,7 @@ const MGS = {
                     let is_diff = MGS.manifest.compare(old_manifest, manifest);
                     //if (diff) MGS.io_outbox({event: 'manifest', payload: manifest});
                     if (is_diff) {
-                        MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: "all", bundle:'same_md5_agents' });
+                        MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: "all", bundle:'same_md5_agents', who_call:"changes in update directory" });
                     }
                 }).catch(ex => { console.log("ERR:", ex); });
             }, LOOK_UPDATE_INTERVAL);
@@ -1215,24 +1296,25 @@ const MGS = {
         {    
             // CLONE BUT NOT REFERENCE
             let old_manifest = MGS.manifest.self;
-            console.log("checking updates...");
+            //console.log("checking updates...");
             // if it is a folder, then additional property 'emty_dir' with index '3'
             get_dir_manifest(upd_fold).then(manifest => {
                 MGS.manifest.self = manifest;
                 let is_diff = MGS.manifest.compare(old_manifest, manifest);
-                console.log("is_diff=", is_diff);
+                //console.log("is_diff=", is_diff);
                 if (is_diff) {
-                    MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: "all", bundle:'same_md5_agents' });
+                    console.log("start_monitor_changes_2(): there are updates...");
+                    MGS.task_board({t_names: ["manifest"], stage: MGS.FRESH, sid: "all", bundle:'same_md5_agents', who_call:"changes in update directory" });
                 }
                 setTimeout(()=>{ 
-                    console.log("start_monitor_changes_2(): calling myself:", upd_fold);
+                    //console.log("start_monitor_changes_2(): calling myself:", upd_fold);
                     this.start_monitor_changes_2(upd_fold); 
                 }, LOOK_UPDATE_INTERVAL);
 
             }).catch(ex => { 
                 console.log("ERR:", ex); 
                 setTimeout(()=>{ 
-                    console.log("start_monitor_changes_2(): calling myself::", upd_fold);
+                    //console.log("start_monitor_changes_2(): calling myself::", upd_fold);
                     this.start_monitor_changes_2(upd_fold); 
                 }, LOOK_UPDATE_INTERVAL);
             });
@@ -1245,7 +1327,7 @@ const MGS = {
                     console.log("there are update files!");
                     return true;
                 } else {
-                    console.log("no updates ...");
+                    //console.log("no updates ...");
                     return false;
                 }
             }
