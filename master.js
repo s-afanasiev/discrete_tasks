@@ -48,18 +48,12 @@
             [
                 { //? means controller ready to receive other JOBS
 					"validate":"is_true",
-                    "if_true": [ 30000, "disk", 10000, "sample_fuction_zero_is_true", "return_" ],
-					"if_false": ""
+                    "if_true": [ 30000, "diskspace", "gpu_info", "process_count", "return_" ],
+					"if_false": []
 				},
                 {
 					"validate":"is_zero",
                     "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
-					"if_false": ""
-				},
-				{
-					"validate":"is_one",
-					"if_true": "sample_fuction_one_is_true",
-					//"if_false":""
 				},
                 { 
                     "novalidate": [ "sample_fuction_not_zero_or_one", 10, "sample_fuction_01" ]
@@ -74,22 +68,42 @@
             "if_answer": 
             [
 				{
-					"validate":"is_zero",
-                    "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
+					"validate":"is_low_space",
+                    "if_true": [ 5000, "clean_diskspace", 60000, "diskspace" ],
 					"if_false": ""
 				},
 				{
-					"validate":"is_one",
-					"if_true": "sample_fuction_one_is_true",
+					"validate":"is_gte_100gb",
+					"if_true": ["say_to_console_100gb", "return_"]
 					//"if_false":""
 				},
                 { 
-                    "novalidate": [ "sample_fuction_not_zero_or_one", 10, "sample_fuction_01" ]
+                    "novalidate": [ "say_to_console_diskspace" ]
+                }
+            ]
+        },
+        gpu_info:
+        {
+            "if_err": { "call_":"sample_err_1" },
+            "if_timeout": { "call_":"sample_timeout_1" },
+            "if_answer": 
+            [
+				{
+					"validate":"is_gpu_exist",
+                    "if_true": [ "say_to_console_gpu_exist"],
+					"if_false": ""
+                },
+                {
+					"validate":"is_gpu_gte_2",
+                    "if_true": [ "say_to_console_gpu_gte_2", 10000, "send_render_to_gpu" ],
+					"if_false": ""
+				},
+                { 
+                    "novalidate": [ 60000, "gpu_info" ]
                 }
             ]
         }
     }
-    
     //------------Jobs Validation Functions------------
     const JVF = 
     {
@@ -97,14 +111,28 @@
             if (par == true) return true;
             else return false;
         }, 
-        is_zero: function(){
-
+        is_zero: function(par){
+            if (par == 0) return true;
+            else return false;
         }, 
-        is_one: function(){
-
+        is_one: function(par){
+            if (par == 1) return true;
+            else return false;
+        }, 
+        is_gt_one: function(par){
+            if (par > 1) return true;
+            else return false;
+        }, 
+        is_gte_one: function(par){
+            if (par >= 1) return true;
+            else return false;
         }, 
     }
-    //------------Jobs Functions------------
+    //------------Jobs Server Side Functions------------
+    const JSSF = {
+
+    }
+    //------------Jobs Low Level Functions------------
     const JF_ = 
     {
         gcounter: 0,
@@ -116,6 +144,9 @@
                 if (typeof sid != 'undefined') {
                     MGS.task_board({t_names:['void_main'], stage: MGS.FRESH, sid: sid, who_call:"JF_.emitter"});
                 } else { console.log("on 'controller_comes' event was not passed socket ID !"); }
+            });
+            JF_.emitter.on('job_complete', task=>{
+                if (task) {task[MGS.STAGE] = MGS.DONE;}
             });
         },
         //? this funtion will be called from
@@ -177,18 +208,19 @@
             if ((!Array.isArray(conditions))||(conditions.length==0)) {
                 return;
             }
-            console.log("--------conditions length =", conditions.length);
+            console.log("-----conditions length =", conditions.length);
             let answer = task[MGS.ANSWER];
             let pending = conditions.length;
-            this.handle_one_condition(conditions, answer, pending);
+            //? recursive function
+            this.handle_one_condition(conditions, answer, pending, ag_sid);
         },
-        handle_one_condition: function(conditions, answer, pending, counter)
+        handle_one_condition: function(conditions, answer, pending, ag_sid, counter)
         {
             if (typeof counter == 'undefined') counter = 0;
             //console.log("one condition =", JSON.stringify(conditions[counter]));
             //one condition = {"validate":"is_true","if_true":[30000,"disk",10000,"sample_fuction_zero_is_true","return_"],"if_false":""}
             let cond = conditions[counter];
-            console.log("-------cond=", cond);
+            //console.log("-------cond=", cond);
             
             //?======expected key 'validate', which may be several=========
             //=============================================================
@@ -210,33 +242,52 @@
                     is_prop_false_checked = true;
                 //--------------------------
                 if (is_validate_true && is_prop_true_checked) {
-                    this.after_validate_actions(cond.if_true).then(res=>{
+                    this.after_validate_actions(cond.if_true, ag_sid).then(res=>{
                         //"if_true":[30000,"disk",10000,"sample_fuction_zero_is_true","return_"]
                         console.log("after_validate_actions(truelist) -> result=", res);
-                        if (res.has_return) { return; }
+                        if ((res)&&(res.has_return)) { return; }
+                        //?---finish or continue recursion-----
+                        if(!--pending) {return;}
+                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
                     }).catch(ex=>{
                         console.log("after_validate_actions(truelist) -> exception=", ex);
+                        //?---finish or continue recursion-----
+                        if(!--pending) {return;}
+                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
                     });
                 } 
                 else if (!is_validate_true && is_prop_false_checked) {
-                    this.after_validate_actions(cond.if_false).then(res=>{
+                    this.after_validate_actions(cond.if_false, ag_sid).then(res=>{
                         console.log("after_validate_actions(falselist) -> result=", res);
-                        if (res.has_return) { return; }
+                        if ((res)&&(res.has_return)) { return; }
+                        //?---finish or continue recursion-----
+                        if(!--pending) {return;}
+                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
                     }).catch(ex=>{
                         console.log("after_validate_actions(falselist) -> exception=", ex);
+                        //?---finish or continue recursion-----
+                        if(!--pending) {return;}
+                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
                     });
                 }
-                //?---finish or continue recursion-----
-                if(!--pending) {return;}
-                else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                
             }
             //?========last check in a specific JOBS[taskname]===========
             //===========================================================
             else if (cond.novalidate) {
-
-                //?---finish or continue recursion-----
-                if(!--pending) {return;}
-                else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                if( (Array.isArray(cond.novalidate))&&(cond.novalidate.length>0) ) {
+                    this.after_validate_actions(cond.novalidate, ag_sid).then(res=>{
+                        console.log("after_validate_actions(falselist) -> result=", res);
+                        //?---finish or continue recursion-----
+                        if(!--pending) {return;}
+                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                    }).catch(ex=>{
+                        console.log("after_validate_actions(falselist) -> exception=", ex);
+                        //?---finish or continue recursion-----
+                        if(!--pending) {return;}
+                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                    });
+                }
             }
             //=============================================================
             //=============================================================
@@ -247,15 +298,73 @@
                 else { this.handle_one_condition(conditions, answer, pending, counter+1); }
             }                
         },
-        after_validate_actions: function(list){
+        after_validate_actions: function(list, ag_sid){
             return new Promise((resolve, reject)=>{
-                resolve({has_return: true});
+                let pending = list.length;
+                let counter = 0;
+                if (pending > 0) {
+                    validate_actions(list, pending, counter).then(res=>{
+                        console.log("one after_validate action result =", res);
+                        resolve(res);
+                    }).catch(ex=>{
+                        console.log("one after validate action err:", ex);
+                        reject(ex);
+                    });
+                } else {
+                    console.log("empty chain of after_validate actions!");
+                    resolve();
+                }
             });
         },
+
+        validate_actions: function(list, pending, counter) {
+            return new Promise((resolve, reject)=>{
+                if (typeof counter == 'undefined') counter = 0;
+
+                if(typeof list[counter] == 'string') 
+                {
+                    //? if this name described in JOBS - it menas we must send this to agent
+                    if(JOBS[list[counter]]) {
+                        //MGS.task_board({t_names: [order[CHK.TYPE]], raws:[raw], stage: MGS.FRESH, sid: ag_sid, who_call:"CHK.LIST"});
+                        MGS.task_board({t_names:[ list[counter] ], stage: MGS.FRESH, sid: ag_sid, who_call:list[counter]});
+                    }
+                    //? if one after_validate action corresponding function is in JSSF structure
+                    else if (JSSF[list[counter]]) {
+                        let result = JSSF[list[counter]]();
+                        //? if function return Promise
+                        if (result instanceof Promise) {
+                            result.then(res=>{ resolve(res);
+                            }).catch(ex=>{ reject(ex); });
+                        }
+                        //? if syncronous function, not Promise
+                        else { resolve(result); }
+
+                        one_validate_action(JSSF[list[counter]]).then(res=>{
+                            console.log("one after_validate action result =", result);
+                        }).catch(ex=>{
+                            console.log("one after validate action err:", ex);
+                        });
+                    }
+                    //? there is no such function neither in JOBS nor in JSSF structure
+                    else {
+                        console.log("one after_validate_action has no corresponding function!");
+                    }
+                }
+                else if(typeof list[counter] == 'number') {
+                    setTimeout(()=>{ resolve(); }, list[counter]);
+                }
+                else { console.log("unknown type of after_validate action! Must be Number or String!"); }   
+            });
+        },
+        one_validate_action: function(v_action){
+            return new Promise((resolve, reject)=>{
+                
+            });
+        }
     }
     //------------Jobs Start Functions------------
     const JSF = {
-        start__default: function(task, ag_sid) {
+        start_default: function(task, ag_sid) {
             console.log("JSF.start__default(): task name =", task[MGS.TNAME]);
             task[MGS.STAGE] = MGS.SENT;
             let payload = {c2_param: 'start default function', c2_jid: ++JF_.gcounter};
@@ -265,21 +374,25 @@
     };
     //------------Jobs Complete Functions------------
     const JCF = {
-        complete__default: function(task, ag_sid) {
+        complete_default: function(task, ag_sid) {
             task[MGS.STAGE] = MGS.DONE;
             console.log("JCF.complete__default(): task name =", task[MGS.TNAME]);
+            JF_.emitter.emit('job_complete', task);
             //TODO check validation Functions described in JOBS
+            JF_.handle_conditions(task, ag_sid);
+            //-------------------------------
         },
+        /*
         void_main: function(task, ag_sid) {
             console.log("JCF.void_main(): task=", JSON.stringify(task));
             //TODO check validation Functions described in JOBS
-            //-------------------------------------------------
-            
+            //------------------------------------------------- 
             JF_.handle_conditions(task, ag_sid);
             console.log("JCF.void_main(): making stage task DONE");
             task[MGS.STAGE] = MGS.DONE;
             //-------------------------------
         },
+        */
     };
     //------------Jobs Timeout Functions------------
     const JTF = {
@@ -999,11 +1112,14 @@ const MGS = {
                                 //?-------------------------------------------
                                 //? From here we can pipe to JSF Functions or to TFX
                                 //?-------------------------------------------
+                                let start_fu_name = TEMPLATES[tlist[t][MGS.TMPL]].start_f;
                                 if (JOBS[tlist[t][MGS.TNAME]]) {
                                     //console.log("calling JSF["+TEMPLATES[tlist[t][MGS.TMPL]].start_f+"] function!");
-                                    JSF[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                    if (JSF[start_fu_name]) 
+                                        JSF[start_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
+                                    else JSF[start_default](tlist[t], MGS.agents[i][MGS.SID]);
                                 } else {
-                                    TFX[TEMPLATES[tlist[t][MGS.TMPL]].start_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                    TFX[start_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
                                 }
                                 //* 2) if task has 'blocking' type - then exit Tasklist
                                 if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
@@ -1039,11 +1155,14 @@ const MGS = {
                             //?-------------------------------------------
                             //? From here we can pipe to JOBS Functions or to TFX
                             //?-------------------------------------------
+                            let complete_fu_name = TEMPLATES[tlist[t][MGS.TMPL]].complete_f;
                             if (JOBS[tlist[t][MGS.TNAME]]) {
                                 //console.log("___complete function name: ", TEMPLATES[tlist[t][MGS.TMPL]].complete_f)
-                                JCF[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                if (JCF[complete_fu_name])                                
+                                    JCF[complete_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
+                                else JCF[complete_default](tlist[t], MGS.agents[i][MGS.SID]);
                             } else {
-                                TFX[TEMPLATES[tlist[t][MGS.TMPL]].complete_f](tlist[t], MGS.agents[i][MGS.SID]);
+                                TFX[complete_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
                             }
                             //? 3) exit Tasklist
                             if (TEMPLATES[tlist[t][MGS.TMPL]].blocking){ tasks_loop_break = true; }
@@ -1102,6 +1221,7 @@ const MGS = {
                     //* break tlist loop
                     if (tasks_loop_break) break;
                 }
+                //? -----Delete Aging tasks-----
                 for (let t in tlist) {
                     //? if task Done and Aging is over - than Delete task
                     if (tlist[t][MGS.STAGE] == 'DONE') {
