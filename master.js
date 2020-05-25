@@ -48,12 +48,8 @@
             [
                 { //? means controller ready to receive other JOBS
 					"validate":"is_true",
-                    "if_true": [ 30000, "diskspace", "gpu_info", "process_count", "return_" ],
+                    "if_true": [ 5000, "diskspace", "gpu_info", "process_count", "return_" ],
 					"if_false": []
-				},
-                {
-					"validate":"is_zero",
-                    "if_true": [ 30000, "sample_fuction_02", 10000, "sample_fuction_zero_is_true", "return_" ],
 				},
                 { 
                     "novalidate": [ "sample_fuction_not_zero_or_one", 10, "sample_fuction_01" ]
@@ -73,8 +69,8 @@
 					"if_false": ""
 				},
 				{
-					"validate":"is_gte_100gb",
-					"if_true": ["say_to_console_100gb", "return_"]
+					"validate":"is_lte_100gb",
+					"if_true": ["say_to_console__lte_100gb", "return_"]
 					//"if_false":""
 				},
                 { 
@@ -99,7 +95,7 @@
 					"if_false": ""
 				},
                 { 
-                    "novalidate": [ 60000, "gpu_info" ]
+                    "novalidate": [ 30000, "gpu_info" ]
                 }
             ]
         }
@@ -127,10 +123,23 @@
             if (par >= 1) return true;
             else return false;
         }, 
+        is_lte_100gb: function(par) {
+            if(par < 100000) return true;
+            else return false;
+        }
     }
     //------------Jobs Server Side Functions------------
     const JSSF = {
-
+        say_to_console_gpu_exist: function(){
+            console.log("))) JSSF.say_to_console_gpu_exist()");
+        },
+        say_to_console_diskspace: function(){
+            console.log("))) JSSF.say_to_console_diskspace()");
+        },
+        say_to_console__lte_100gb: function(){
+            console.log("))) JSSF.say_to_console__lte_100gb()");
+        },
+        
     }
     //------------Jobs Low Level Functions------------
     const JF_ = 
@@ -204,11 +213,12 @@
         },
         handle_conditions: function(task, ag_sid)
         {
-            let conditions = JOBS.void_main.if_answer;
+            console.log("-1-handle_conditions: task name=", task[MGS.TNAME]);
+            let conditions = JOBS[task[MGS.TNAME]].if_answer;
             if ((!Array.isArray(conditions))||(conditions.length==0)) {
                 return;
             }
-            console.log("-----conditions length =", conditions.length);
+            console.log("----conditions length =", conditions.length);
             let answer = task[MGS.ANSWER];
             let pending = conditions.length;
             //? recursive function
@@ -217,6 +227,7 @@
         handle_one_condition: function(conditions, answer, pending, ag_sid, counter)
         {
             if (typeof counter == 'undefined') counter = 0;
+            
             //console.log("one condition =", JSON.stringify(conditions[counter]));
             //one condition = {"validate":"is_true","if_true":[30000,"disk",10000,"sample_fuction_zero_is_true","return_"],"if_false":""}
             let cond = conditions[counter];
@@ -226,6 +237,7 @@
             //=============================================================
             if (cond.validate) 
             {
+                console.log("-2-handle_one_condition(): validate:",counter, conditions[counter].validate);
                 //? calling validation function, e.g. "is_true"
                 let is_validate_true;
                 if (typeof JVF[cond.validate] == 'function') {
@@ -241,52 +253,68 @@
                 if( (cond.if_false) && (Array.isArray(cond.if_false)) && (cond.if_false.length>0) )
                     is_prop_false_checked = true;
                 //--------------------------
+                console.log("is_prop_true_checked =", is_prop_true_checked);
+                console.log("is_prop_false_checked =", is_prop_false_checked);
                 if (is_validate_true && is_prop_true_checked) {
+                    console.log("true branch of validation block!");
                     this.after_validate_actions(cond.if_true, ag_sid).then(res=>{
                         //"if_true":[30000,"disk",10000,"sample_fuction_zero_is_true","return_"]
                         console.log("after_validate_actions(truelist) -> result=", res);
                         if ((res)&&(res.has_return)) { return; }
                         //?---finish or continue recursion-----
                         if(!--pending) {return;}
-                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                        else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                     }).catch(ex=>{
                         console.log("after_validate_actions(truelist) -> exception=", ex);
                         //?---finish or continue recursion-----
                         if(!--pending) {return;}
-                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                        else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                     });
                 } 
                 else if (!is_validate_true && is_prop_false_checked) {
+                    console.log("false branch of validation block!");
                     this.after_validate_actions(cond.if_false, ag_sid).then(res=>{
                         console.log("after_validate_actions(falselist) -> result=", res);
                         if ((res)&&(res.has_return)) { return; }
                         //?---finish or continue recursion-----
                         if(!--pending) {return;}
-                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                        else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                     }).catch(ex=>{
                         console.log("after_validate_actions(falselist) -> exception=", ex);
                         //?---finish or continue recursion-----
                         if(!--pending) {return;}
-                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                        else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                     });
+                }
+                else {
+                    //?---finish or continue recursion-----
+                    if(!--pending) {return;}
+                    else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                 }
                 
             }
             //?========last check in a specific JOBS[taskname]===========
             //===========================================================
             else if (cond.novalidate) {
-                if( (Array.isArray(cond.novalidate))&&(cond.novalidate.length>0) ) {
+                console.log("-2-handle_one_condition(): novalidate:",counter, conditions[counter].novalidate);
+                if( (Array.isArray(cond.novalidate))&&(cond.novalidate.length>0) ) 
+                {
                     this.after_validate_actions(cond.novalidate, ag_sid).then(res=>{
                         console.log("after_validate_actions(falselist) -> result=", res);
                         //?---finish or continue recursion-----
                         if(!--pending) {return;}
-                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                        else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                     }).catch(ex=>{
                         console.log("after_validate_actions(falselist) -> exception=", ex);
                         //?---finish or continue recursion-----
                         if(!--pending) {return;}
-                        else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                        else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                     });
+                }
+                else {
+                    //?---finish or continue recursion-----
+                    if(!--pending) {return;}
+                    else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
                 }
             }
             //=============================================================
@@ -295,20 +323,18 @@
                 console.log("not regulated keys! must be 'validate' or 'novalidate'", Object.keys(conditions[counter])); 
                 //?---finish or continue recursion-----
                 if(!--pending) {return;}
-                else { this.handle_one_condition(conditions, answer, pending, counter+1); }
+                else { this.handle_one_condition(conditions, answer, pending, ag_sid, counter+1); }
             }                
         },
         after_validate_actions: function(list, ag_sid){
+            console.log("--3--after_validate_actions()");
             return new Promise((resolve, reject)=>{
                 let pending = list.length;
                 let counter = 0;
                 if (pending > 0) {
-                    validate_actions(list, pending, counter).then(res=>{
-                        console.log("one after_validate action result =", res);
-                        resolve(res);
-                    }).catch(ex=>{
-                        console.log("one after validate action err:", ex);
-                        reject(ex);
+                    this.perform_validate_actions(ag_sid, list, pending, counter, function(errlist, reslist){
+                        console.log("after_validate actions of one condition has done!");
+                        resolve({errlist:errlist});
                     });
                 } else {
                     console.log("empty chain of after_validate actions!");
@@ -317,54 +343,82 @@
             });
         },
 
-        validate_actions: function(list, pending, counter) {
+        perform_validate_actions: function(ag_sid, list, pending, counter, callback) 
+        {
+            console.log("---4---perform_validate_actions(): action=", list[counter]);
             return new Promise((resolve, reject)=>{
                 if (typeof counter == 'undefined') counter = 0;
+                let errlist = [];
+                let reslist = [];
 
                 if(typeof list[counter] == 'string') 
                 {
                     //? if this name described in JOBS - it menas we must send this to agent
                     if(JOBS[list[counter]]) {
                         //MGS.task_board({t_names: [order[CHK.TYPE]], raws:[raw], stage: MGS.FRESH, sid: ag_sid, who_call:"CHK.LIST"});
+                        console.log("______ag_sid = ", ag_sid);
                         MGS.task_board({t_names:[ list[counter] ], stage: MGS.FRESH, sid: ag_sid, who_call:list[counter]});
+                        //? --------recursion-------------------
+                        if (!--pending) { callback(errlist, reslist); return; }
+                        else { this.perform_validate_actions(ag_sid, list, pending, counter+1, callback); }
                     }
                     //? if one after_validate action corresponding function is in JSSF structure
                     else if (JSSF[list[counter]]) {
-                        let result = JSSF[list[counter]]();
-                        //? if function return Promise
-                        if (result instanceof Promise) {
-                            result.then(res=>{ resolve(res);
-                            }).catch(ex=>{ reject(ex); });
-                        }
-                        //? if syncronous function, not Promise
-                        else { resolve(result); }
-
-                        one_validate_action(JSSF[list[counter]]).then(res=>{
-                            console.log("one after_validate action result =", result);
+                        this.one_validate_action(list[counter]).then(res=>{
+                            console.log("one after_validate action result =", res);
+                            reslist.push(res);
+                            //? --------recursion-------------------
+                            if (!--pending) { callback(errlist, reslist); return; }
+                            else { this.perform_validate_actions(ag_sid, list, pending, counter+1, callback); }
                         }).catch(ex=>{
+                            errlist.push(list[counter]);
                             console.log("one after validate action err:", ex);
+                            //? --------recursion-------------------
+                            if (!--pending) { callback(errlist, reslist); return; }
+                            else { this.perform_validate_actions(ag_sid, list, pending, counter+1, callback); }
                         });
                     }
                     //? there is no such function neither in JOBS nor in JSSF structure
                     else {
                         console.log("one after_validate_action has no corresponding function!");
+                        //? --------recursion-------------------
+                        if (!--pending) { callback(errlist, reslist); return; }
+                        else { this.perform_validate_actions(ag_sid, list, pending, counter+1, callback); }
                     }
                 }
                 else if(typeof list[counter] == 'number') {
-                    setTimeout(()=>{ resolve(); }, list[counter]);
+                    setTimeout(()=>{
+                        //? --------recursion-------------------
+                        if (!--pending) { callback(errlist, reslist); return; }
+                        else { this.perform_validate_actions(ag_sid, list, pending, counter+1, callback); }
+                    }, list[counter]);
                 }
-                else { console.log("unknown type of after_validate action! Must be Number or String!"); }   
+                else { 
+                    console.log("unknown type of after_validate action! Must be Number or String!");
+                    //? --------recursion-------------------
+                    if (!--pending) { callback(errlist, reslist); return; }
+                    else { this.perform_validate_actions(ag_sid, list, pending, counter+1, callback); } 
+                }   
             });
         },
-        one_validate_action: function(v_action){
+        one_validate_action: function(v_action)
+        {
+            console.log("---5---one_validate_action(): action=", v_action);
             return new Promise((resolve, reject)=>{
-                
+                let result = JSSF[v_action]();
+                //? if function return Promise
+                if (result instanceof Promise) {
+                    result.then(res=>{ resolve(res);
+                    }).catch(ex=>{ reject(ex); });
+                }
+                //? if syncronous function, not Promise
+                else { resolve(result); }
             });
         }
     }
     //------------Jobs Start Functions------------
     const JSF = {
-        start_default: function(task, ag_sid) {
+        start__default: function(task, ag_sid) {
             console.log("JSF.start__default(): task name =", task[MGS.TNAME]);
             task[MGS.STAGE] = MGS.SENT;
             let payload = {c2_param: 'start default function', c2_jid: ++JF_.gcounter};
@@ -374,7 +428,7 @@
     };
     //------------Jobs Complete Functions------------
     const JCF = {
-        complete_default: function(task, ag_sid) {
+        complete__default: function(task, ag_sid) {
             task[MGS.STAGE] = MGS.DONE;
             console.log("JCF.complete__default(): task name =", task[MGS.TNAME]);
             JF_.emitter.emit('job_complete', task);
@@ -627,7 +681,7 @@
     //-----------------------------------------
     const TEMPLATES = {
         default: {
-            timeout: 5000, blocking: true, aging: 300000,
+            timeout: 5000, blocking: true, aging: 60000,
             start_f:    "start__default",
             complete_f: "complete__default",
             timeout_f:  "timeout__default",
@@ -1117,7 +1171,7 @@ const MGS = {
                                     //console.log("calling JSF["+TEMPLATES[tlist[t][MGS.TMPL]].start_f+"] function!");
                                     if (JSF[start_fu_name]) 
                                         JSF[start_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
-                                    else JSF[start_default](tlist[t], MGS.agents[i][MGS.SID]);
+                                    else JSF[start__default](tlist[t], MGS.agents[i][MGS.SID]);
                                 } else {
                                     TFX[start_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
                                 }
@@ -1160,7 +1214,7 @@ const MGS = {
                                 //console.log("___complete function name: ", TEMPLATES[tlist[t][MGS.TMPL]].complete_f)
                                 if (JCF[complete_fu_name])                                
                                     JCF[complete_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
-                                else JCF[complete_default](tlist[t], MGS.agents[i][MGS.SID]);
+                                else JCF[complete__default](tlist[t], MGS.agents[i][MGS.SID]);
                             } else {
                                 TFX[complete_fu_name](tlist[t], MGS.agents[i][MGS.SID]);
                             }
@@ -1224,13 +1278,12 @@ const MGS = {
                 //? -----Delete Aging tasks-----
                 for (let t in tlist) {
                     //? if task Done and Aging is over - than Delete task
-                    if (tlist[t][MGS.STAGE] == 'DONE') {
+                    if (tlist[t][MGS.STAGE] == MGS.DONE) {
                         //Delete Task if its AGE has Expired
                         let now = new Date().getTime();
                         if ( (tlist[t][MGS.TIMEPUSH] + tlist[t][MGS.AGING]) < now ) {
-                            console.log("delete Aging task! length before=", tlist.length);
-                            tlist.shift(t);
-                            console.log("delete Aging task! length after=", tlist.length);
+                            console.log("delete Aging task:", tlist[t][MGS.TNAME], ", Age:",tlist[t][MGS.AGING]);
+                            tlist.splice(t, 1);
                         }
                     }
                 }
@@ -1239,7 +1292,6 @@ const MGS = {
     },
     task_board: function(arg_) {
         console.log("task_board(): who call me:", arg_.who_call)
-        console.log("arg_ =", JSON.stringify(arg_))
         //* arg = { t_names:Array, raws:Array, stage:Number, sid:String, template:Object }
         //* 'stage' can be: "new", "gone", "done", maybe also "err"
         let arg = (arg_)?(arg_):{};
@@ -1275,7 +1327,8 @@ const MGS = {
                         if (TEMPLATES[arg.t_names[tn]]) { 
                             one_task[MGS.TMPL] = arg.t_names[tn]; 
                             //? how much this task will live in tasklist and then deleted 
-                            one_task[MGS.AGING] = TEMPLATES[arg.t_names[tn]]['aging']; 
+                            one_task[MGS.AGING] = TEMPLATES[arg.t_names[tn]]['aging'];
+                             
                         }
                         else {
                             one_task[MGS.TMPL] = "default"; 

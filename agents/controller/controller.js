@@ -275,6 +275,19 @@ const GS = {
                 //}, 20000);
             }
         });
+        socket.on('diskspace', function(data){
+            console.log("'diskspace' event, params:", data);
+            let params = data.payload.c2_param;
+            let job_id = data.payload.c2_jid;
+            let task_id = data.tid;
+            GS.io_to_master({kind: "report", done: true, title: 'diskspace', answer: 123456789, tid: data.tid, jid: job_id});
+        });
+        socket.on('gpu_info', function(data){
+            console.log("'gpu_info' event, params:", data);
+            // params = data.payload.c2_param; task_id = data.tid;
+            let job_id = data.payload.c2_jid;
+            GS.io_to_master({kind: "report", done: true, title: 'gpu_info', answer: 'gpu test ok', tid: data.tid, jid: job_id});
+        });
     },
     io_to_master: function(data){
         //* {kind: "", title: "", done: Boolean, data: Any}
